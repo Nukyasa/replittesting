@@ -7,6 +7,7 @@ import { nanoid } from "../lib/nanoid";
 import { logger } from "../lib/logger";
 import { analyzeTender } from "../services/aiAnalyzer";
 import { EventEmitter } from "events";
+import { runEjnScraper } from "../services/ejnScraper";
 
 export const scraperRouter = Router();
 scraperRouter.use(authMiddleware);
@@ -22,82 +23,70 @@ const CRON_SCHEDULES = {
   un: "0 6 * * *",
 };
 
-async function runMockScraper(source: string, triggeredBy = "manual"): Promise<void> {
+async function runRealScraper(source: string, logId: string, triggeredBy = "manual"): Promise<void> {
   if (isRunning) {
     logger.info("Scraper already running, skipping");
     return;
   }
   isRunning = true;
 
-  const logId = nanoid();
-  await db.insert(scraperLogsTable).values({
-    id: logId,
-    source,
-    triggeredBy,
-    startedAt: new Date(),
-    status: "running",
-  });
-
   scraperEvents.emit("progress", {
     source,
     status: "running",
-    message: `Pokrenuto skrejpovanje: ${source}`,
+    message: `Pokrenuto preuzimanje podataka s EJN portala...`,
   });
 
   try {
-    await new Promise((r) => setTimeout(r, 1500));
+    let newCount = 0;
 
-    scraperEvents.emit("progress", {
-      source,
-      status: "running",
-      message: "Procesiranje tendera...",
-    });
+    if (source === "ejn" || source === "all") {
+      scraperEvents.emit("progress", { source, status: "running", message: "Preuzimam tender obavještenja s open.ejn.gov.ba..." });
+      newCount = await runEjnScraper(logId);
+      scraperEvents.emit("progress", { source, status: "running", message: `Pronađeno ${newCount} novih EJN tendera` });
+    }
 
-    await new Promise((r) => setTimeout(r, 1000));
+    if (source === "reference" || source === "all") {
+      scraperEvents.emit("progress", { source, status: "running", message: "Reference.ba: simulacija (API nije javno dostupan)..." });
+      await new Promise((r) => setTimeout(r, 800));
+    }
 
-    const newCount = Math.floor(Math.random() * 5);
-    const updatedCount = Math.floor(Math.random() * 3);
+    if (source === "un" || source === "all") {
+      scraperEvents.emit("progress", { source, status: "running", message: "UNDP: simulacija (API nije javno dostupan)..." });
+      await new Promise((r) => setTimeout(r, 500));
+    }
 
     await db
       .update(scraperLogsTable)
       .set({
         completedAt: new Date(),
         status: "completed",
-        tendersFound: newCount + updatedCount,
+        tendersFound: newCount,
         tendersNew: newCount,
-        tendersUpdated: updatedCount,
+        tendersUpdated: 0,
       })
       .where(eq(scraperLogsTable.id, logId));
 
     scraperEvents.emit("progress", {
       source,
       status: "completed",
-      message: `Završeno: ${newCount} novih, ${updatedCount} ažuriranih tendera`,
+      message: `Završeno: ${newCount} novih tendera uvezeno`,
       tendersNew: newCount,
-      tendersUpdated: updatedCount,
+      tendersUpdated: 0,
     });
   } catch (err) {
     logger.error({ err }, "Scraper error");
     await db
       .update(scraperLogsTable)
-      .set({
-        completedAt: new Date(),
-        status: "failed",
-        errors: String(err),
-      })
+      .set({ completedAt: new Date(), status: "failed", errors: String(err) })
       .where(eq(scraperLogsTable.id, logId));
 
-    scraperEvents.emit("progress", {
-      source,
-      status: "failed",
-      message: "Greška pri skrejpovanju",
-    });
+    scraperEvents.emit("progress", { source, status: "failed", message: "Greška pri preuzimanju podataka" });
   } finally {
     isRunning = false;
   }
 }
 
-export { runMockScraper };
+export { runRealScraper as runMockScraper };
 
 scraperRouter.get("/status", async (_req, res) => {
   const sources = ["ejn", "reference", "un"];
@@ -142,7 +131,7 @@ scraperRouter.post("/trigger", async (req, res) => {
     .returning();
 
   sources.forEach((s) => {
-    runMockScraper(s, "manual").catch((err) =>
+    runRealScraper(s, log.id, "manual").catch((err) =>
       logger.error({ err }, "Scraper error")
     );
   });

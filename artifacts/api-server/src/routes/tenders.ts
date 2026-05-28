@@ -126,6 +126,74 @@ tendersRouter.get("/", async (req, res) => {
   });
 });
 
+tendersRouter.get("/export", async (req, res) => {
+  const {
+    search,
+    source,
+    entity,
+    category,
+    status,
+  } = req.query as Record<string, string>;
+
+  const conditions = [];
+  if (search) conditions.push(ilike(tendersTable.title, `%${search}%`));
+  if (source) {
+    const srcs = source.split(",").filter(Boolean);
+    if (srcs.length > 0) conditions.push(inArray(tendersTable.source, srcs));
+  }
+  if (entity) conditions.push(eq(tendersTable.entity, entity));
+  if (category) conditions.push(eq(tendersTable.category, category));
+  if (status) conditions.push(eq(tendersTable.status, status));
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const tenders = await db
+    .select({
+      id: tendersTable.id,
+      title: tendersTable.title,
+      contractingAuth: tendersTable.contractingAuth,
+      entity: tendersTable.entity,
+      category: tendersTable.category,
+      source: tendersTable.source,
+      status: tendersTable.status,
+      estimatedValue: tendersTable.estimatedValue,
+      currency: tendersTable.currency,
+      publicationDate: tendersTable.publicationDate,
+      deadline: tendersTable.deadline,
+      relevanceScore: aiAnalysisTable.relevanceScore,
+    })
+    .from(tendersTable)
+    .leftJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
+    .where(where)
+    .orderBy(desc(tendersTable.publicationDate))
+    .limit(5000);
+
+  const BOM = "\uFEFF";
+  const headers = ["ID", "Naziv", "Ugovorni organ", "Entitet", "Kategorija", "Izvor", "Status", "Vrijednost", "Valuta", "Datum objave", "Rok prijave", "AI ocjena"];
+
+  const fmtDate = (d: Date | null) => d ? new Date(d).toLocaleDateString("bs-BA") : "";
+  const rows = tenders.map(t => [
+    t.id,
+    `"${(t.title || "").replace(/"/g, '""')}"`,
+    `"${(t.contractingAuth || "").replace(/"/g, '""')}"`,
+    t.entity || "",
+    t.category || "",
+    t.source || "",
+    t.status || "",
+    t.estimatedValue?.toString() || "",
+    t.currency || "",
+    fmtDate(t.publicationDate),
+    fmtDate(t.deadline),
+    t.relevanceScore?.toString() || "",
+  ]);
+
+  const csv = BOM + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="ejn_tenderi_${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
+});
+
 tendersRouter.get("/:id", async (req, res) => {
   const { id } = req.params;
   const userId = req.user!.id;

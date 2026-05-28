@@ -7,6 +7,7 @@ import { scraperRouter } from "./scraper";
 import { notificationsRouter } from "./notifications";
 import { usersRouter } from "./users";
 import { profileRouter } from "./profile";
+import { ejnRouter } from "./ejn";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use("/scraper", scraperRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/users", usersRouter);
 router.use("/profile", profileRouter);
+router.use("/ejn", ejnRouter);
 
 export default router;

@@ -1,42 +1,41 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
+import { Switch, Route } from "wouter";
+import { AppLayout } from "@/components/layout/app-layout";
+import { AuthRoute } from "@/components/auth-route";
 
-const queryClient = new QueryClient();
+// Pages
+import LoginPage from "@/pages/login";
+import DashboardPage from "@/pages/dashboard";
+import TendersPage from "@/pages/tenders";
+import TenderDetailPage from "@/pages/tender-detail";
+import AnalyticsPage from "@/pages/analytics";
+import KanbanPage from "@/pages/kanban";
+import SettingsPage from "@/pages/settings";
+import AdminPage from "@/pages/admin";
 
-function Home() {
-  return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900">Replit Agent is building...</h1>
-        <p className="mt-2 text-sm text-gray-600">Your app will appear here once it's ready.</p>
-      </div>
-    </div>
-  );
-}
-
-function Router() {
+export default function App() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
-      <Route component={NotFound} />
+      <Route path="/login" component={LoginPage} />
+      
+      <Route>
+        <AuthRoute>
+          <AppLayout>
+            <Switch>
+              <Route path="/" component={DashboardPage} />
+              <Route path="/dashboard" component={DashboardPage} />
+              <Route path="/tenders" component={TendersPage} />
+              <Route path="/tenders/:id" component={TenderDetailPage} />
+              <Route path="/kanban" component={KanbanPage} />
+              <Route path="/analytics" component={AnalyticsPage} />
+              <Route path="/settings" component={SettingsPage} />
+              <Route path="/admin" component={AdminPage} />
+              <Route>
+                <div className="p-8 text-center text-red-500">Stranica nije pronađena</div>
+              </Route>
+            </Switch>
+          </AppLayout>
+        </AuthRoute>
+      </Route>
     </Switch>
   );
 }
-
-function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
-  );
-}
-
-export default App;

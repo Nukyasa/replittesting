@@ -3,20 +3,31 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: ASA Tender Intelligence API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: tenders
+    description: Tender management
+  - name: analytics
+    description: Analytics and statistics
+  - name: scraper
+    description: Scraper operations
+  - name: notifications
+    description: Notifications
+  - name: users
+    description: User management
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +35,639 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: Logout successful
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+
+  /tenders:
+    get:
+      operationId: listTenders
+      tags: [tenders]
+      summary: List tenders with filters
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: source
+          in: query
+          schema:
+            type: string
+        - name: entity
+          in: query
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: minScore
+          in: query
+          schema:
+            type: number
+        - name: maxScore
+          in: query
+          schema:
+            type: number
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated list of tenders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenderList"
+
+  /tenders/{id}:
+    get:
+      operationId: getTender
+      tags: [tenders]
+      summary: Get tender by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tender details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenderDetail"
+        "404":
+          description: Not found
+
+  /tenders/{id}/analysis:
+    get:
+      operationId: getTenderAnalysis
+      tags: [tenders]
+      summary: Get AI analysis for tender
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: AI Analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiAnalysis"
+        "404":
+          description: Not found
+
+  /tenders/{id}/analyze:
+    post:
+      operationId: analyzeTender
+      tags: [tenders]
+      summary: Trigger AI analysis for tender
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Analysis triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiAnalysis"
+
+  /tenders/{id}/chat:
+    post:
+      operationId: chatWithTender
+      tags: [tenders]
+      summary: AI chat about tender
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatInput"
+      responses:
+        "200":
+          description: AI response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+
+  /tenders/{id}/notes:
+    get:
+      operationId: listTenderNotes
+      tags: [tenders]
+      summary: List notes for tender
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Note"
+    post:
+      operationId: createTenderNote
+      tags: [tenders]
+      summary: Create note for tender
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteInput"
+      responses:
+        "201":
+          description: Created note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+
+  /tenders/{id}/notes/{noteId}:
+    delete:
+      operationId: deleteTenderNote
+      tags: [tenders]
+      summary: Delete note
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: noteId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /tenders/{id}/watch:
+    post:
+      operationId: watchTender
+      tags: [tenders]
+      summary: Add tender to watchlist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Watching
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserTender"
+    delete:
+      operationId: unwatchTender
+      tags: [tenders]
+      summary: Remove tender from watchlist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+
+  /tenders/{id}/userstatus:
+    patch:
+      operationId: updateTenderUserStatus
+      tags: [tenders]
+      summary: Update user status for tender
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserTenderUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserTender"
+
+  /tenders/{id}/documents:
+    get:
+      operationId: listTenderDocuments
+      tags: [tenders]
+      summary: List documents for tender
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Documents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Document"
+
+  /analytics/summary:
+    get:
+      operationId: getAnalyticsSummary
+      tags: [analytics]
+      summary: Get analytics summary
+      responses:
+        "200":
+          description: Summary stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSummary"
+
+  /analytics/by-category:
+    get:
+      operationId: getAnalyticsByCategory
+      tags: [analytics]
+      summary: Tenders grouped by category
+      responses:
+        "200":
+          description: Category stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CategoryStat"
+
+  /analytics/by-entity:
+    get:
+      operationId: getAnalyticsByEntity
+      tags: [analytics]
+      summary: Tenders grouped by entity
+      responses:
+        "200":
+          description: Entity stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EntityStat"
+
+  /analytics/timeline:
+    get:
+      operationId: getAnalyticsTimeline
+      tags: [analytics]
+      summary: Tenders per day timeline
+      responses:
+        "200":
+          description: Timeline data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimelineStat"
+
+  /analytics/score-dist:
+    get:
+      operationId: getAnalyticsScoreDist
+      tags: [analytics]
+      summary: AI score distribution
+      responses:
+        "200":
+          description: Score distribution
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScoreDistStat"
+
+  /analytics/expiring:
+    get:
+      operationId: getAnalyticsExpiring
+      tags: [analytics]
+      summary: Expiring tenders
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 30
+      responses:
+        "200":
+          description: Expiring tenders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tender"
+
+  /scraper/status:
+    get:
+      operationId: getScraperStatus
+      tags: [scraper]
+      summary: Get scraper status
+      responses:
+        "200":
+          description: Scraper status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScraperStatus"
+
+  /scraper/trigger:
+    post:
+      operationId: triggerScraper
+      tags: [scraper]
+      summary: Trigger scraper
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScraperTriggerInput"
+      responses:
+        "200":
+          description: Triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScraperLog"
+
+  /scraper/logs:
+    get:
+      operationId: getScraperLogs
+      tags: [scraper]
+      summary: Get scraper logs
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Scraper logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScraperLog"
+
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List notifications
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+
+  /notifications/read-all:
+    patch:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark all notifications as read
+      responses:
+        "200":
+          description: Done
+
+  /notifications/{id}/read:
+    patch:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark notification as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Done
+
+  /notifications/{id}:
+    delete:
+      operationId: deleteNotification
+      tags: [notifications]
+      summary: Delete notification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List users (admin)
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create user (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserInput"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /users/{id}:
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update user (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserInput"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete user (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /profile:
+    put:
+      operationId: updateProfile
+      tags: [users]
+      summary: Update profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +678,654 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    LoginInput:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required:
+        - email
+        - password
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+      required:
+        - token
+        - user
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        department:
+          type: ["string", "null"]
+        companyTags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - email
+        - name
+        - role
+        - companyTags
+        - createdAt
+
+    CreateUserInput:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        department:
+          type: string
+      required:
+        - email
+        - password
+        - name
+
+    UpdateUserInput:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        department:
+          type: string
+
+    UpdateProfileInput:
+      type: object
+      properties:
+        name:
+          type: string
+        department:
+          type: string
+        companyTags:
+          type: array
+          items:
+            type: string
+
+    Tender:
+      type: object
+      properties:
+        id:
+          type: string
+        externalId:
+          type: string
+        source:
+          type: string
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        contractingAuth:
+          type: string
+        category:
+          type: string
+        cpvCodes:
+          type: array
+          items:
+            type: string
+        estimatedValue:
+          type: ["number", "null"]
+        currency:
+          type: string
+        publicationDate:
+          type: string
+          format: date-time
+        deadline:
+          type: string
+          format: date-time
+        tenderType:
+          type: string
+        entity:
+          type: string
+        status:
+          type: string
+        sourceUrl:
+          type: string
+        relevanceScore:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - externalId
+        - source
+        - title
+        - contractingAuth
+        - category
+        - cpvCodes
+        - currency
+        - publicationDate
+        - deadline
+        - tenderType
+        - entity
+        - status
+        - sourceUrl
+        - createdAt
+
+    TenderList:
+      type: object
+      properties:
+        tenders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tender"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        totalPages:
+          type: integer
+      required:
+        - tenders
+        - total
+        - page
+        - limit
+        - totalPages
+
+    TenderDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        externalId:
+          type: string
+        source:
+          type: string
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        contractingAuth:
+          type: string
+        category:
+          type: string
+        cpvCodes:
+          type: array
+          items:
+            type: string
+        estimatedValue:
+          type: ["number", "null"]
+        currency:
+          type: string
+        publicationDate:
+          type: string
+          format: date-time
+        deadline:
+          type: string
+          format: date-time
+        tenderType:
+          type: string
+        entity:
+          type: string
+        status:
+          type: string
+        sourceUrl:
+          type: string
+        relevanceScore:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        aiAnalysis:
+          $ref: "#/components/schemas/AiAnalysis"
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/Document"
+        userTender:
+          $ref: "#/components/schemas/UserTender"
+      required:
+        - id
+        - externalId
+        - source
+        - title
+        - contractingAuth
+        - category
+        - cpvCodes
+        - currency
+        - publicationDate
+        - deadline
+        - tenderType
+        - entity
+        - status
+        - sourceUrl
+        - createdAt
+
+    AiAnalysis:
+      type: object
+      properties:
+        id:
+          type: string
+        tenderId:
+          type: string
+        summary:
+          type: string
+        keyRequirements:
+          type: array
+          items:
+            type: string
+        eligibilityCriteria:
+          type: array
+          items:
+            type: string
+        risks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskItem"
+        opportunities:
+          type: array
+          items:
+            type: string
+        redFlags:
+          type: array
+          items:
+            type: string
+        estimatedWorkload:
+          type: string
+        suggestedApproach:
+          type: string
+        relevanceScore:
+          type: number
+        relevanceTags:
+          type: array
+          items:
+            type: string
+        competitionLevel:
+          type: string
+        successProbability:
+          type: number
+        insuranceRelevance:
+          type: string
+        requiredDocs:
+          type: array
+          items:
+            type: string
+        analyzedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - tenderId
+        - summary
+        - keyRequirements
+        - eligibilityCriteria
+        - risks
+        - opportunities
+        - redFlags
+        - estimatedWorkload
+        - suggestedApproach
+        - relevanceScore
+        - relevanceTags
+        - competitionLevel
+        - successProbability
+        - insuranceRelevance
+        - requiredDocs
+        - analyzedAt
+
+    RiskItem:
+      type: object
+      properties:
+        risk:
+          type: string
+        severity:
+          type: string
+      required:
+        - risk
+        - severity
+
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        tenderId:
+          type: string
+        name:
+          type: string
+        originalUrl:
+          type: string
+        localPath:
+          type: ["string", "null"]
+        fileType:
+          type: string
+        parsedText:
+          type: ["string", "null"]
+        fileSize:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - tenderId
+        - name
+        - originalUrl
+        - fileType
+        - createdAt
+
+    Note:
+      type: object
+      properties:
+        id:
+          type: string
+        tenderId:
+          type: string
+        userId:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        user:
+          $ref: "#/components/schemas/User"
+      required:
+        - id
+        - tenderId
+        - userId
+        - content
+        - createdAt
+
+    NoteInput:
+      type: object
+      properties:
+        content:
+          type: string
+      required:
+        - content
+
+    UserTender:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        tenderId:
+          type: string
+        status:
+          type: string
+        priority:
+          type: string
+        assignedTo:
+          type: ["string", "null"]
+        internalDeadline:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - userId
+        - tenderId
+        - status
+        - priority
+        - createdAt
+
+    UserTenderUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+        priority:
+          type: string
+        assignedTo:
+          type: string
+        internalDeadline:
+          type: string
+
+    AnalyticsSummary:
+      type: object
+      properties:
+        totalTenders:
+          type: integer
+        openTenders:
+          type: integer
+        avgRelevanceScore:
+          type: number
+        totalEstimatedValue:
+          type: number
+        highRelevance:
+          type: integer
+        expiringIn7Days:
+          type: integer
+        expiringIn30Days:
+          type: integer
+        newToday:
+          type: integer
+        watchlistCount:
+          type: integer
+      required:
+        - totalTenders
+        - openTenders
+        - avgRelevanceScore
+        - totalEstimatedValue
+        - highRelevance
+        - expiringIn7Days
+        - expiringIn30Days
+        - newToday
+        - watchlistCount
+
+    CategoryStat:
+      type: object
+      properties:
+        category:
+          type: string
+        count:
+          type: integer
+        avgScore:
+          type: number
+      required:
+        - category
+        - count
+        - avgScore
+
+    EntityStat:
+      type: object
+      properties:
+        entity:
+          type: string
+        count:
+          type: integer
+      required:
+        - entity
+        - count
+
+    TimelineStat:
+      type: object
+      properties:
+        date:
+          type: string
+        count:
+          type: integer
+      required:
+        - date
+        - count
+
+    ScoreDistStat:
+      type: object
+      properties:
+        range:
+          type: string
+        count:
+          type: integer
+      required:
+        - range
+        - count
+
+    ScraperStatus:
+      type: object
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScraperSourceStatus"
+        isRunning:
+          type: boolean
+      required:
+        - sources
+        - isRunning
+
+    ScraperSourceStatus:
+      type: object
+      properties:
+        source:
+          type: string
+        lastRun:
+          type: ["string", "null"]
+          format: date-time
+        nextRun:
+          type: ["string", "null"]
+          format: date-time
+        status:
+          type: string
+        tendersFound:
+          type: integer
+      required:
+        - source
+        - status
+        - tendersFound
+
+    ScraperTriggerInput:
+      type: object
+      properties:
+        source:
+          type: string
+      required:
+        - source
+
+    ScraperLog:
+      type: object
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        triggeredBy:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: ["string", "null"]
+          format: date-time
+        tendersFound:
+          type: integer
+        tendersNew:
+          type: integer
+        tendersUpdated:
+          type: integer
+        docsDownloaded:
+          type: integer
+        errors:
+          type: ["string", "null"]
+        status:
+          type: string
+      required:
+        - id
+        - source
+        - triggeredBy
+        - startedAt
+        - tendersFound
+        - tendersNew
+        - tendersUpdated
+        - docsDownloaded
+        - status
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+        message:
+          type: string
+        tenderId:
+          type: ["string", "null"]
+        read:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - userId
+        - type
+        - title
+        - message
+        - read
+        - createdAt
+
+    ChatInput:
+      type: object
+      properties:
+        message:
+          type: string
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+      required:
+        - message
+
+    ChatMessage:
+      type: object
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+      required:
+        - role
+        - content
+
+    ChatResponse:
+      type: object
+      properties:
+        response:
+          type: string
+      required:
+        - response

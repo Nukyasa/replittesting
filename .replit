@@ -30,3 +30,11 @@ externalPort = 8081
 [[ports]]
 localPort = 19810
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+JWT_SECRET = "asa_tender_jwt_secret_2026_secure"
+REFERENCE_SITE_URL = "https://tender.serapiondev.com/"
+REFERENCE_SITE_USER = "test"
+NODE_ENV = "development"

@@ -1,0 +1,726 @@
+Build a full-stack AI-powered Tender Management Application branded for 
+ASA CENTRAL Osiguranje d.d. Sarajevo.
+
+App name: "ASA Tender Intelligence"
+Tagline: "Spojeni povjerenjem — Spojeni tenderima"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BRANDING — ASA CENTRAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Logo image URL: https://asacentral.ba/logo.webp
+  → Use this <img> tag in sidebar and login page:
+    <img src="https://asacentral.ba/logo.webp" alt="ASA Central Osiguranje" 
+         style="height: 40px; object-fit: contain;" />
+
+Brand color palette:
+  --asa-blue:        #002d82   (primary — navbar, buttons, accents)
+  --asa-blue-light:  #0041b8   (hover states)
+  --asa-blue-pale:   #e8edf8   (backgrounds, badges)
+  --asa-blue-mid:    #1a52a0   (borders, secondary elements)
+  --asa-white:       #ffffff
+  --asa-gray:        #f4f5f7   (page background)
+  --asa-text:        #1a1a2e   (body text)
+  --asa-muted:       #6b7280   (secondary text)
+  --asa-success:     #166534
+  --asa-warning:     #92400e
+  --asa-danger:      #991b1b
+
+Apply branding everywhere:
+  - Sidebar background: #002d82 (dark navy)
+  - Sidebar text/icons: white with 0.7 opacity for inactive, full white active
+  - Active nav item: white left border + white text + rgba(255,255,255,0.15) bg
+  - All primary buttons: bg #002d82, hover #0041b8, white text
+  - Score badges high: bg #e8edf8, text #002d82
+  - Login page: centered card with logo on top, navy submit button
+  - Top bar: white bg, bottom border #e5e7eb, logo in top-left
+  - All chart accent color: #002d82
+
+Typography: Inter font from Google Fonts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TECH STACK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Backend:  Node.js + Express + Prisma ORM
+Database: PostgreSQL (Neon serverless)
+Frontend: React + Vite + TailwindCSS + shadcn/ui
+AI:       Anthropic Claude API (claude-sonnet-4-20250514)
+Scraper:  Playwright (headless) + Cheerio for parsing
+Auth:     JWT + bcrypt (tokens in httpOnly cookie)
+Queue:    node-cron for scheduled scraping
+Charts:   Recharts
+PDF:      pdfjs-dist for parsing tender documents
+Icons:    Lucide React
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFERENCE SITE (clone this UX + data model)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:      https://tender.serapiondev.com/
+User:     test
+Password: pFKyIvM622KT2D0n0XCpa5
+
+First thing on startup: use Playwright to login to this site,
+scrape its tender listings, understand the data structure 
+(titles, categories, statuses, contracting authorities, 
+deadlines, values, documents), and mirror that exact data 
+model in your Prisma schema. Then supercharge it with AI.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRIMARY DATA SOURCES — SCRAPERS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Build THREE scrapers, each in its own file:
+
+1. /scrapers/ejnScraper.js
+   Source: https://www.ejn.gov.ba/
+   BiH e-Javne Nabavke — main FBiH+RS portal
+   Scrape: open tenders, all pages, with documents
+
+2. /scrapers/referenceScraper.js  
+   Source: https://tender.serapiondev.com/
+   Login with credentials above, scrape all tender data
+   This is the primary reference for data structure
+
+3. /scrapers/unScraper.js
+   Source: https://un-tenders.com/
+   Filter for tenders relevant to Bosnia/Southeast Europe
+
+Each scraper must:
+  - Use Playwright in headless mode
+  - Handle pagination automatically (follow "next page" until none)
+  - Extract per tender:
+      externalId, title, contractingAuthority, description,
+      category, cpvCodes (if available), estimatedValue, currency,
+      publicationDate, deadline, tenderType, entity (FBiH/RS/BD),
+      status, sourceUrl, documentUrls[]
+  - Download PDF/DOC documents to /uploads/{tenderId}/
+  - Parse PDF text using pdfjs-dist, store in Document.parsedText
+  - Upsert by externalId (skip if unchanged, update if modified)
+  - Log run to ScraperLog table
+  - Handle errors with 3-retry logic + exponential backoff
+  - Emit SSE events (Server-Sent Events) so frontend shows live progress
+
+Cron schedule:
+  - ejnScraper:       every 2 hours  ("0 */2 * * *")
+  - referenceScraper: every 4 hours  ("0 */4 * * *")
+  - unScraper:        once daily at 6am ("0 6 * * *")
+  - dailyDigest AI:   every day at 7am  ("0 7 * * *")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DATABASE SCHEMA (Prisma + PostgreSQL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+model Tender {
+  id                String    @id @default(cuid())
+  externalId        String    @unique
+  source            String    // ejn | reference | un
+  title             String
+  description       String?   @db.Text
+  contractingAuth   String
+  category          String
+  cpvCodes          String[]
+  estimatedValue    Float?
+  currency          String    @default("KM")
+  publicationDate   DateTime
+  deadline          DateTime
+  tenderType        String    // open | restricted | negotiated
+  entity            String    // FBiH | RS | BD | International
+  status            String    @default("open")
+  sourceUrl         String
+  documents         Document[]
+  aiAnalysis        AiAnalysis?
+  userTenders       UserTender[]
+  notes             Note[]
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model AiAnalysis {
+  id                  String   @id @default(cuid())
+  tenderId            String   @unique
+  tender              Tender   @relation(fields: [tenderId], references: [id])
+  summary             String   @db.Text
+  keyRequirements     Json     // string[]
+  eligibilityCriteria Json     // string[]
+  risks               Json     // {risk: string, severity: low|medium|high}[]
+  opportunities       Json     // string[]
+  redFlags            Json     // string[]
+  estimatedWorkload   String
+  suggestedApproach   String   @db.Text
+  relevanceScore      Float    // 0–100
+  relevanceTags       String[]
+  competitionLevel    String   // low | medium | high
+  successProbability  Float    // 0–100
+  insuranceRelevance  String   @db.Text  // specific analysis for insurance company
+  requiredDocs        Json     // string[] — checklist of required documents
+  analyzedAt          DateTime @default(now())
+  analysisVersion     String   @default("1")
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  tenderId    String
+  tender      Tender   @relation(fields: [tenderId], references: [id])
+  name        String
+  originalUrl String
+  localPath   String?
+  fileType    String   // pdf | doc | docx | xlsx
+  parsedText  String?  @db.Text
+  fileSize    Int?
+  createdAt   DateTime @default(now())
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  password       String
+  name           String
+  role           String       @default("user") // admin | user | viewer
+  department     String?      // e.g. "Nabavka", "Pravna služba", "IT"
+  companyTags    String[]     // expertise tags for AI matching
+  userTenders    UserTender[]
+  notes          Note[]
+  notifications  Notification[]
+  createdAt      DateTime     @default(now())
+}
+
+model UserTender {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  tenderId    String
+  tender      Tender    @relation(fields: [tenderId], references: [id])
+  status      String    @default("watching") // watching | in_progress | submitted | won | lost | skipped
+  assignedTo  String?
+  priority    String    @default("medium")   // low | medium | high | critical
+  internalDeadline DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  @@unique([userId, tenderId])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  tenderId  String
+  tender    Tender   @relation(fields: [tenderId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String   // new_tender | deadline_soon | ai_alert | digest | scraper_done
+  title     String
+  message   String   @db.Text
+  tenderId  String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ScraperLog {
+  id               String    @id @default(cuid())
+  source           String
+  triggeredBy      String    @default("cron")  // cron | manual
+  startedAt        DateTime
+  completedAt      DateTime?
+  tendersFound     Int       @default(0)
+  tendersNew       Int       @default(0)
+  tendersUpdated   Int       @default(0)
+  docsDownloaded   Int       @default(0)
+  errors           String?   @db.Text
+  status           String    // running | completed | failed
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AI ENGINE — /services/aiAnalyzer.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Use Anthropic SDK: npm install @anthropic-ai/sdk
+Model: claude-sonnet-4-20250514
+Max tokens: 2000 per analysis call
+
+SYSTEM PROMPT (use for all tender analysis):
+"""
+Ti si ekspertni savjetnik za javne nabavke u Bosni i Hercegovini, 
+specijalizovan za kompaniju ASA CENTRAL osiguranje d.d. Sarajevo — 
+najveće domaće osiguravajuće društvo u BiH sa 500+ zaposlenika, 
+121 poslovnicom i ASA Grupacijom kao matičnom kompanijom.
+
+Analiziraš tendere s ciljem da pomogneš ASA CENTRAL-u da identificira 
+relevantne prilike za:
+- Nabavku IT opreme, softvera i usluga
+- Konsultantske i profesionalne usluge  
+- Osiguranje voznog parka i imovine (kao ponuđač/executor)
+- Infrastrukturne radove i održavanje poslovnica
+- Marketinške i komunikacijske usluge
+- HR, edukacijske programe i treninge
+
+Relevantni zakoni: Zakon o javnim nabavkama BiH (ZJN 2014, izmjene 2021).
+Odgovaraj isključivo u validnom JSON formatu, bez markdowna ili objašnjenja.
+"""
+
+TENDER ANALYSIS — call after each new tender is scraped:
+Send Claude this JSON prompt:
+{
+  "action": "analyze_tender",
+  "tender": { ...full tender object with description and parsed doc text... },
+  "companyProfile": {
+    "name": "ASA CENTRAL osiguranje d.d.",
+    "sector": "Insurance",
+    "expertise": ["IT systems", "insurance software", "fleet management", 
+                  "office supplies", "consulting", "digital transformation",
+                  "marketing", "HR training", "facility management"]
+  }
+}
+
+Expected JSON response schema:
+{
+  "summary": "string (2-3 rečenice na bosanskom)",
+  "keyRequirements": ["string", ...],         // top 5 zahtjeva
+  "eligibilityCriteria": ["string", ...],     // uslovi učešća  
+  "risks": [{"risk": "string", "severity": "low|medium|high"}, ...],
+  "opportunities": ["string", ...],
+  "redFlags": ["string", ...],                // razlozi za diskvalifikaciju
+  "estimatedWorkload": "string",              // npr. "2-4 sedmice, 2 osobe"
+  "suggestedApproach": "string",
+  "relevanceScore": 0-100,                    // 0=irelevantno, 100=savršen fit
+  "relevanceTags": ["string", ...],
+  "competitionLevel": "low|medium|high",
+  "successProbability": 0-100,
+  "insuranceRelevance": "string",             // zašto je/nije relevantno za ASA CENTRAL
+  "requiredDocs": ["string", ...]             // checklist potrebnih dokumenata
+}
+
+Parse response, save to AiAnalysis table.
+Queue analysis for all new tenders found in each scraper run.
+Process max 5 tenders in parallel (Promise.allSettled with concurrency limit).
+
+DAILY DIGEST — runs at 07:00 each morning:
+Call Claude with top 20 tenders by relevanceScore scraped in last 24h.
+Generate: "Jutarnji izvještaj" with top 5 picks + one-liner each.
+Save as Notification(type: "digest") for all users.
+
+AI CHAT — per-tender conversational assistant:
+POST /api/tenders/:id/chat  { message: string, history: [] }
+
+System: same as above + full tender data + AI analysis as context
+Pre-built suggestion prompts to show as chips:
+  "Koji dokumenti su potrebni za prijavu?"
+  "Napiši checklist za pripremu ponude"
+  "Procijeni budžet za realizaciju"
+  "Koji su glavni rizici?"
+  "Generiši nacrt tehničke specifikacije"
+  "Je li ASA CENTRAL podoban za ovaj tender?"
+  "Ko su vjerovatni konkurenti?"
+  "Napiši executive summary za upravu"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BACKEND API ROUTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+All routes under /api, JWT auth middleware on all except /auth/*
+
+AUTH:
+  POST   /api/auth/login
+  POST   /api/auth/logout
+  GET    /api/auth/me
+
+TENDERS:
+  GET    /api/tenders
+         Query params: page, limit, search, source, entity, category,
+         status, minScore, maxScore, deadlineBefore, deadlineAfter,
+         minValue, maxValue, sortBy, sortOrder
+  GET    /api/tenders/:id
+  GET    /api/tenders/:id/analysis
+  POST   /api/tenders/:id/analyze      (trigger/retrigger AI analysis)
+  POST   /api/tenders/:id/chat         (AI chat message)
+  GET    /api/tenders/:id/notes
+  POST   /api/tenders/:id/notes
+  DELETE /api/tenders/:id/notes/:noteId
+  POST   /api/tenders/:id/watch        (add to user's watchlist)
+  DELETE /api/tenders/:id/watch
+  PATCH  /api/tenders/:id/userstatus   (update status, priority, assignedTo)
+
+DOCUMENTS:
+  GET    /api/tenders/:id/documents
+  POST   /api/tenders/:id/documents    (manual upload)
+  GET    /api/documents/:id/download
+
+SCRAPER:
+  GET    /api/scraper/status           (current status + last run info)
+  POST   /api/scraper/trigger          { source: 'ejn'|'reference'|'un'|'all' }
+  GET    /api/scraper/logs             (paginated history)
+  GET    /api/scraper/stream           (SSE endpoint for live progress)
+
+ANALYTICS:
+  GET    /api/analytics/summary        (totals, today stats)
+  GET    /api/analytics/by-category    (count + avg score per category)
+  GET    /api/analytics/by-entity      (count per entity)
+  GET    /api/analytics/timeline       (tenders per day, last 30 days)
+  GET    /api/analytics/score-dist     (score distribution histogram)
+  GET    /api/analytics/expiring       (tenders expiring in next 7/14/30 days)
+
+NOTIFICATIONS:
+  GET    /api/notifications            (unread first, paginated)
+  PATCH  /api/notifications/read-all
+  PATCH  /api/notifications/:id/read
+  DELETE /api/notifications/:id
+
+USERS (admin only):
+  GET    /api/users
+  POST   /api/users
+  PATCH  /api/users/:id
+  DELETE /api/users/:id
+
+PROFILE:
+  PUT    /api/profile                  (update name, department, tags)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FRONTEND — React + Vite + Tailwind
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+File structure:
+  src/
+    components/
+      Layout/Sidebar.jsx        (ASA branded, navy #002d82)
+      Layout/TopBar.jsx
+      Layout/NotificationBell.jsx
+      Tenders/TenderCard.jsx
+      Tenders/TenderTable.jsx
+      Tenders/TenderFilters.jsx
+      Tenders/Scorebadge.jsx
+      AI/AnalysisPanel.jsx
+      AI/ChatInterface.jsx
+      AI/DailyDigest.jsx
+      Charts/CategoryChart.jsx
+      Charts/TimelineChart.jsx
+      Scraper/ScraperStatus.jsx
+      Scraper/LiveProgress.jsx   (SSE consumer)
+      Common/StatusBadge.jsx
+      Common/DeadlineBadge.jsx
+    pages/
+      Login.jsx
+      Dashboard.jsx
+      Tenders.jsx
+      TenderDetail.jsx
+      Analytics.jsx
+      Settings.jsx
+      Admin.jsx  (admin only)
+    hooks/
+      useTenders.js
+      useAI.js
+      useSSE.js           (Server-Sent Events hook)
+    services/
+      api.js              (axios instance + interceptors)
+    store/
+      authStore.js        (Zustand)
+      notificationStore.js
+
+PAGE SPECS:
+
+1. /login
+   - Centered card on light gray bg
+   - ASA Central logo (40px height) centered at top
+   - "ASA Tender Intelligence" title below logo
+   - "Spojeni povjerenjem — Spojeni tenderima" subtitle
+   - Email + password inputs
+   - Navy #002d82 submit button
+   - Copyright footer: "© 2026 ASA CENTRAL osiguranje d.d."
+
+2. /dashboard
+   TOP STATS ROW (4 cards):
+     - Aktivni tenderi (total open, +X danas)
+     - AI Relevantni (score >75, highlight navy)
+     - Rok u 7 dana (amber warning)  
+     - U obradi (your watchlist count)
+   
+   AI DAILY DIGEST PANEL:
+     - Navy left border accent
+     - Title: "AI Jutarnji izvještaj — [datum]"
+     - Latest digest text
+     - "5 najrelevantnijih tendera danas" mini list
+   
+   LIVE SCRAPER STATUS BAR:
+     - Shows: last sync time per source, next scheduled, status indicator
+     - Green dot = OK, orange = running, red = failed
+     - "Sinkroniziraj sada" button triggers all scrapers
+     - Live progress bar appears when scraper is running (SSE)
+   
+   RELEVANCE CHART:
+     - Horizontal bar chart by category (Recharts)
+     - Color: navy bars with label
+   
+   RECENT TENDERS TABLE:
+     - Last 10 highest-score tenders
+     - Columns: Naziv, Ugovorni organ, Vrijednost, Rok, AI Score, Status, Akcije
+     - "Vidi sve →" link
+
+3. /tenders
+   FILTER SIDEBAR (left, collapsible):
+     - Text search (title + description)
+     - Source: checkboxes (EJN, Reference, UN)
+     - Entity: FBiH | RS | BD | Međunarodni
+     - Category: multi-select dropdown
+     - AI Score: range slider 0-100
+     - Value: min/max inputs (KM)
+     - Deadline: date range picker
+     - Status: Open | Closed | Awarded
+     - "Primijeniti filtere" button + "Resetuj" link
+   
+   MAIN AREA:
+     - Result count + active filter chips (dismissible)
+     - Sort: by deadline / relevance score / value / date added
+     - View toggle: table | card grid
+     - Pagination (20 per page)
+     
+   TABLE COLUMNS:
+     Title (truncated 60 chars), Ugovorni organ, Entity badge,
+     Vrijednost (formatted KM), Rok (colored by urgency),
+     AI Score badge (navy >80, green 60-80, amber 40-60, gray <40),
+     Status badge, Actions (eye icon → detail, bookmark → watchlist)
+   
+   CARD VIEW:
+     Each card: title, authority, value, deadline pill, AI score badge,
+     source badge, "Analiza" button
+
+4. /tenders/:id — TENDER DETAIL
+   HEADER:
+     - Breadcrumb: Tenderi > [title truncated]
+     - Title (h1)
+     - Meta row: entity badge, source badge, status badge, 
+       publication date, "Dodaj u watchlist" / status selector
+     - Key info pills: deadline (colored), value, type
+   
+   TAB NAVIGATION (5 tabs):
+   
+   Tab 1: PREGLED
+     - Description (full text)
+     - Contracting authority details
+     - Documents section: list with file icon, name, size, 
+       download button, "Tekst" expand to show parsed PDF content
+     - Source link: "Originalni tender →"
+   
+   Tab 2: AI ANALIZA
+     - Analysis timestamp + "Osvježi analizu" button
+     - Summary card (highlighted)
+     - Two-column grid:
+         Left: Ključni zahtjevi (numbered list)
+                Kriteriji podobnosti (checklist icons)
+                Potrebni dokumenti (checklist, copyable)
+         Right: Rizici (color-coded by severity with icons)
+                 Prilike (green checkmarks)
+                 Crvene zastavice (red warning icons)
+     - Metrics row: 
+         AI Relevantnost gauge (0-100, navy fill)
+         Vjerovatnoća uspjeha gauge (0-100, green fill)
+         Konkurencija badge (Niska/Srednja/Visoka)
+         Procijenjeni obim rada
+     - "Relevantnost za ASA CENTRAL" dedicated section with 
+       insuranceRelevance text
+     - Predloženi pristup (full text card with navy left border)
+   
+   Tab 3: AI CHAT
+     - Chat interface: messages list + input at bottom
+     - System message: "Analiziram tender: [title]. Postavite pitanje."
+     - Suggestion chips row: 7 pre-built prompts (see AI section)
+     - Each message: user (right, navy bubble) / AI (left, gray bubble)
+     - Loading: typing indicator (3 dots animation)
+     - Copy button on AI messages
+     - "Novo razgovor" button to clear history
+   
+   Tab 4: DOKUMENTI
+     - Upload zone (drag & drop) + file picker
+     - List of all docs with: icon, name, size, upload date, 
+       "Preuzmi", "Prikaži tekst" toggle for parsed content
+     - Parsed text shown in scrollable code-like block
+   
+   Tab 5: NAPOMENE
+     - Team notes: avatar initial circle, name, timestamp, content
+     - Textarea at top to add new note + "Dodaj napomenu" button
+     - Each note editable/deletable by author
+   
+   RIGHT SIDEBAR (sticky):
+     - Status tracker: dropdown (Pratim→U obradi→Prijavljeno→Pobjeda/Gubitak)
+     - Priority selector: Low/Medium/High/Critical with colored dots
+     - Assign to: team member selector
+     - Internal deadline: date picker
+     - Quick actions: Copy link, Export PDF, Share via email
+
+5. /analytics
+   PAGE TITLE: "Analitika tendera"
+   DATE RANGE PICKER: last 7/30/90 days / custom
+   
+   Row 1 stats: Total tendera, Prosječni AI score, 
+               Ukupna procijenjena vrijednost, Tenderi u roku 30 dana
+   Row 2 charts (2-col grid):
+     - Bar chart: Tenderi po kategoriji (horizontal, navy bars)
+     - Pie chart: Distribucija po entitetu (FBiH/RS/BD/Međunarodni)
+   Row 3 (full width):
+     - Line chart: Timeline tendera (nova po danu, 30 dana)
+   Row 4 (2-col grid):
+     - AI Score distribution: histogram with navy bars
+     - Expiring tenders: table (next 30 days, sorted by deadline)
+   
+6. /settings
+   TABS: Profil | Kompanija | Notifikacije | Skraperi | Sistem
+   
+   Profil: name, email, department, password change
+   Kompanija: expertise tags editor (add/remove chips),
+              company profile preview for AI
+   Notifikacije: toggle each type (new_tender, deadline, digest, scraper)
+                 deadline alert threshold (7/14/30 days)
+   Skraperi: enable/disable each source, 
+             view cron schedule, "Pokreni odmah" per source
+   Sistem (admin): API key status, db stats, user management link
+
+7. /admin (admin role only)
+   - User list: name, email, role, department, last login
+   - Add/Edit/Delete users
+   - Role assignment
+   - System stats: total tenders, analyses, scraper runs, storage used
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+UX RULES & DISPLAY FORMATTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Numbers:
+  - Monetary: "280.000,00 KM" (BiH format, use toLocaleString('bs-BA'))
+  - Euros: "85.000,00 EUR"
+  - Dates: "DD.MM.YYYY." (e.g. "04.06.2026.")
+  - Score: always integer, no decimals (Math.round())
+
+AI Score badges:
+  score ≥ 80  → navy bg #002d82, white text — "Odlično"
+  score 60-79 → green bg, dark green text — "Dobro"
+  score 40-59 → amber bg, dark amber text — "Srednje"
+  score < 40  → gray bg, dark gray text — "Nisko"
+
+Deadline badges:
+  ≤ 3 days  → red bg, red text + "HITNO!" label
+  ≤ 7 days  → amber bg, amber text
+  ≤ 30 days → light yellow, normal text
+  > 30 days → gray, muted text
+
+Status badges:
+  open     → green  "Otvoren"
+  closed   → gray   "Zatvoren"
+  awarded  → navy   "Dodijeljen"
+  cancelled → red   "Poništen"
+
+Competition badges:
+  low    → green  "Niska konkurencija"
+  medium → amber  "Srednja konkurencija"
+  high   → red    "Visoka konkurencija"
+
+Loading states:
+  - Use skeleton loaders (gray animated pulse) not spinners
+  - AI analysis: skeleton with 4-5 rows of different widths
+  - Tender list: skeleton cards
+
+Toast notifications (top-right):
+  - Scraper finished: "Sinkronizacija završena — X novih tendera"
+  - AI done: "AI analiza završena za: [tender title truncated]"
+  - Error: red toast with error message
+
+Empty states:
+  - No tenders: navy icon + "Nema tendera. Pokrenite sinkronizaciju."
+  - No analysis: "AI analiza u toku..." with progress bar
+  - No notes: "Dodajte prvu napomenu za ovaj tender"
+
+Mobile responsive:
+  - Sidebar collapses to icon-only on <768px, full hamburger on <480px
+  - Bottom navigation bar on mobile (4 icons: home, tenders, chat, profile)
+  - Tables become card stacks on mobile
+
+Keyboard shortcuts:
+  - Cmd/Ctrl+K → global search modal
+  - Cmd/Ctrl+S → sync all scrapers
+  - ESC → close modals
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ENVIRONMENT VARIABLES (.env)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DATABASE_URL=postgresql://...
+JWT_SECRET=asa_tender_jwt_secret_2026
+ANTHROPIC_API_KEY=your_anthropic_key_here
+REFERENCE_SITE_URL=https://tender.serapiondev.com/
+REFERENCE_SITE_USER=test
+REFERENCE_SITE_PASS=pFKyIvM622KT2D0n0XCpa5
+UPLOADS_DIR=./uploads
+PORT=3000
+NODE_ENV=development
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SEED SCRIPT (prisma/seed.js)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Create on first run:
+  Users:
+    - admin@asacentral.ba / Admin1234! (role: admin, dept: IT)
+    - nabavka@asacentral.ba / Nabavka2026! (role: user, dept: Nabavka)
+    - pravna@asacentral.ba / Pravna2026! (role: user, dept: Pravna služba)
+  
+  Tenders (25 realistic BiH public tenders):
+    - Mix of entities: FBiH (12), RS (8), BD (3), International (2)
+    - Categories: IT (6), Osiguranje (4), Konsalting (5), 
+                  Nabavka opreme (4), Radovi (3), Marketing (3)
+    - Statuses: open (18), closed (5), awarded (2)
+    - Values ranging from 15.000 KM to 1.200.000 KM
+    - Deadlines spread over next 60 days (9 expiring soon)
+    - Realistic contracting authorities:
+        FBiH Ministarstvo finansija, Grad Sarajevo, JP Elektroprivreda BiH,
+        BH Telecom d.d., Kantonalna bolnica Zenica, ZDK vlada,
+        KJKP Vodovod, Federalni zavod za zapošljavanje, etc.
+  
+  AI Analyses: generate for first 8 tenders (realistic JSON data)
+  Scraper Logs: 5 completed runs (mixed sources, last run 2h ago)
+  Notifications: 5 unread (mix of types) for each user
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STARTUP SEQUENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+On npm run dev:
+  1. Run prisma migrate dev (create tables)
+  2. Run seed script (users + dummy data)
+  3. Immediately trigger referenceScraper (populate from demo site)
+  4. Start cron jobs
+  5. Start Express server on PORT
+  6. Start Vite dev server (proxy /api → Express)
+  7. Open browser to http://localhost:5173
+  8. Show login page with ASA Central logo
+
+Build instructions in README.md:
+  - npm install
+  - Setup .env
+  - npx playwright install chromium
+  - npx prisma migrate dev
+  - npm run seed
+  - npm run dev
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BONUS FEATURES (implement in order)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. EXPORT TO PDF: "Izvezi tender" button generates professional PDF with:
+   - ASA Central logo in header
+   - Tender full info
+   - AI analysis (all sections)
+   - Required docs checklist
+   - Footer: "ASA CENTRAL osiguranje d.d. — Povjerljivo"
+   Use: pdfkit or puppeteer to generate
+
+2. KANBAN BOARD: /kanban page showing user's watchlist as columns:
+   Pratim → U obradi → Prijavljeno → Pobjeda / Gubitak
+   Drag and drop cards between columns.
+   Each card: title (truncated), deadline pill, AI score badge, priority dot
+
+3. GLOBAL SEARCH (Cmd+K modal):
+   Full-text search across tender titles + descriptions
+   Shows results grouped by category with AI score visible
+   Keyboard navigable (arrows + enter)
+
+4. WIN TRACKER: In UserTender, allow marking as Won/Lost with:
+   - Contract value (actual vs estimated)
+   - Notes
+   Dashboard shows: Win rate %, Total contract value won this year
+
+5. SMART ALERTS: If a tender's deadline changes to <72h and user 
+   hasn't acted, send critical notification automatically.
+   If relevanceScore > 90, push high-priority notification immediately
+   regardless of user notification settings.

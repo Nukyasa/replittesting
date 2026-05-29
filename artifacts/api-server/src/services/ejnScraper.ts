@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
-import { tendersTable, scraperLogsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { tendersTable, scraperLogsTable, aiAnalysisTable, notificationsTable, usersTable } from "@workspace/db";
+import { eq, gte } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid";
 import { logger } from "../lib/logger";
 
@@ -20,6 +20,12 @@ interface EjnProcedureCall {
   Announced?: string;
   LastUpdated?: string;
   IsLatestVersion?: boolean;
+}
+
+interface EjnProcedureDetail {
+  SubmissionDeadline?: string;
+  DeadlineForSubmission?: string;
+  [key: string]: unknown;
 }
 
 function mapEntity(name?: string): string {
@@ -57,9 +63,91 @@ function mapSource(procedureCallType?: string): string {
   return "EJN";
 }
 
-function estimateDeadline(announced?: string): Date {
+function fallbackDeadline(announced?: string): Date {
   const base = announced ? new Date(announced) : new Date();
   return new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+}
+
+let _loggedDetailFields = false;
+
+async function fetchDeadline(itemId: number, announced?: string): Promise<Date> {
+  try {
+    const url = `${EJN_BASE}/AnnouncementProcedureCalls(${itemId})?$format=json`;
+    const response = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "ASA-Tender-Intelligence/1.0" },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      logger.warn({ status: response.status, itemId }, "EJN detail fetch non-OK, using fallback deadline");
+      return fallbackDeadline(announced);
+    }
+
+    const detail = await response.json() as EjnProcedureDetail;
+
+    if (!_loggedDetailFields) {
+      logger.info({ fields: Object.keys(detail) }, "EJN detail fields (first fetch)");
+      _loggedDetailFields = true;
+    }
+
+    const deadlineStr = detail.SubmissionDeadline ?? detail.DeadlineForSubmission ?? null;
+
+    if (deadlineStr && typeof deadlineStr === "string") {
+      const d = new Date(deadlineStr);
+      if (!isNaN(d.getTime())) return d;
+    }
+
+    return fallbackDeadline(announced);
+  } catch (err) {
+    logger.warn({ err, itemId }, "EJN detail fetch failed, using fallback deadline");
+    return fallbackDeadline(announced);
+  }
+}
+
+async function sendHighRelevanceNotifications(insertedIds: string[]): Promise<void> {
+  if (insertedIds.length === 0) return;
+
+  try {
+    const highScoreTenders = await db
+      .select({
+        id: tendersTable.id,
+        title: tendersTable.title,
+        relevanceScore: aiAnalysisTable.relevanceScore,
+      })
+      .from(tendersTable)
+      .innerJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
+      .where(gte(aiAnalysisTable.relevanceScore, 75))
+      .limit(10);
+
+    const relevantIds = new Set(insertedIds);
+    const matched = highScoreTenders.filter((t) => relevantIds.has(t.id));
+
+    if (matched.length === 0) return;
+
+    const allUsers = await db.select({ id: usersTable.id }).from(usersTable);
+
+    const notifications = [];
+    for (const tender of matched.slice(0, 10)) {
+      for (const user of allUsers) {
+        notifications.push({
+          id: nanoid(),
+          userId: user.id,
+          type: "tender",
+          title: "Novi relevantni tender",
+          message: tender.title,
+          tenderId: tender.id,
+          read: false,
+        });
+      }
+    }
+
+    if (notifications.length > 0) {
+      await db.insert(notificationsTable).values(notifications);
+      logger.info({ count: notifications.length }, "High-relevance tender notifications sent");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Failed to send high-relevance notifications");
+  }
 }
 
 export async function runEjnScraper(logId: string, signal?: AbortSignal): Promise<number> {
@@ -67,6 +155,7 @@ export async function runEjnScraper(logId: string, signal?: AbortSignal): Promis
   let skip = 0;
   const top = 100;
   let hasMore = true;
+  const insertedIds: string[] = [];
 
   while (hasMore) {
     if (signal?.aborted) break;
@@ -117,15 +206,16 @@ export async function runEjnScraper(logId: string, signal?: AbortSignal): Promis
 
       const category = mapCategory(item.ContractType, item.ContractCategoryName);
       const entity = mapEntity(item.ContractingAuthorityAdministrativeUnitName);
-      const deadline = estimateDeadline(item.Announced);
+      const deadline = await fetchDeadline(item.Id, item.Announced);
       const source = mapSource(item.ProcedureCallType);
 
       const ejnLink = item.Id
         ? `https://next.ejn.gov.ba/bs-latn-ba/procurements/announcement/${item.Id}`
         : null;
 
+      const tenderId = nanoid();
       await db.insert(tendersTable).values({
-        id: nanoid(),
+        id: tenderId,
         externalId,
         title: item.ProcedureName || `Tender ${item.Number || item.Id}`,
         contractingAuth: item.ContractingAuthorityName || "N/A",
@@ -146,6 +236,7 @@ export async function runEjnScraper(logId: string, signal?: AbortSignal): Promis
         scrapedAt: new Date(),
       });
 
+      insertedIds.push(tenderId);
       inserted++;
     }
 
@@ -159,5 +250,10 @@ export async function runEjnScraper(logId: string, signal?: AbortSignal): Promis
   }
 
   logger.info({ inserted, logId }, "EJN scraper finished");
+
+  if (inserted > 0) {
+    await sendHighRelevanceNotifications(insertedIds);
+  }
+
   return inserted;
 }

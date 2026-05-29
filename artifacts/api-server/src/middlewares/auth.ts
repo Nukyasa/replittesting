@@ -4,7 +4,12 @@ import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
-const JWT_SECRET = process.env.JWT_SECRET || "asa_tender_jwt_secret_2026";
+const isDev = process.env.NODE_ENV === "development";
+const JWT_SECRET = process.env.JWT_SECRET ?? (isDev ? "asa_tender_jwt_secret_2026" : null);
+
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable must be set in production");
+}
 
 declare global {
   namespace Express {
@@ -28,7 +33,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   }
   const token = authHeader.slice(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; role: string };
+    const payload = jwt.verify(token, JWT_SECRET!) as { userId: string; role: string };
     const [user] = await db
       .select({
         id: usersTable.id,

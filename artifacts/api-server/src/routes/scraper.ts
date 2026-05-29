@@ -4,6 +4,7 @@ import { scraperLogsTable, tendersTable, aiAnalysisTable } from "@workspace/db";
 import { eq, desc, sql } from "drizzle-orm";
 import { authMiddleware } from "../middlewares/auth";
 import { nanoid } from "../lib/nanoid";
+import { scraperLimiter } from "../lib/rateLimiters";
 import { logger } from "../lib/logger";
 import { analyzeTender } from "../services/aiAnalyzer";
 import { EventEmitter } from "events";
@@ -15,7 +16,7 @@ scraperRouter.use(authMiddleware);
 export const scraperEvents = new EventEmitter();
 scraperEvents.setMaxListeners(100);
 
-let isRunning = false;
+export let isRunning = false;
 
 const CRON_SCHEDULES = {
   ejn: "0 */2 * * *",
@@ -113,7 +114,7 @@ scraperRouter.get("/status", async (_req, res) => {
   res.json({ sources: statusData, isRunning });
 });
 
-scraperRouter.post("/trigger", async (req, res) => {
+scraperRouter.post("/trigger", scraperLimiter, async (req, res) => {
   const { source } = req.body;
   if (!source) return res.status(400).json({ error: "Source is required" });
 

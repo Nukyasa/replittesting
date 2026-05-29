@@ -8,12 +8,25 @@ import { logger } from "../lib/logger";
 
 export const authRouter = Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || "asa_tender_jwt_secret_2026";
+const isDev = process.env.NODE_ENV === "development";
+const JWT_SECRET = process.env.JWT_SECRET ?? (isDev ? "asa_tender_jwt_secret_2026" : null);
+
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable must be set in production");
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 authRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: "Email i lozinka su obavezni" });
+  }
+  if (!EMAIL_RE.test(String(email))) {
+    return res.status(400).json({ error: "Email adresa nije ispravnog formata" });
+  }
+  if (String(password).length < 6) {
+    return res.status(400).json({ error: "Lozinka mora imati najmanje 6 znakova" });
   }
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
@@ -54,3 +67,5 @@ authRouter.get("/me", async (req, res) => {
     return res.status(401).json({ error: "Invalid token" });
   }
 });
+
+export { JWT_SECRET };

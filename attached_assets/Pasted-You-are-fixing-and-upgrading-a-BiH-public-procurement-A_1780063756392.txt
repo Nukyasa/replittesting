@@ -1,0 +1,104 @@
+You are fixing and upgrading a BiH public procurement AI tool (Tender Manager AI).
+Stack: Express + TypeScript + Drizzle ORM + PostgreSQL + Anthropic SDK.
+Key files: artifacts/api-server/src/
+
+Apply ALL of the following changes. Do not change anything outside what is specified.
+
+---
+
+## 1. RATE LIMITING (app.ts)
+Install and configure `express-rate-limit`.
+- Global: 100 requests / 15 min per IP
+- AI routes (/api/tenders/:id/analyze, /api/tenders/:id/chat): 10 req / 15 min per IP
+- Scraper trigger (/api/scraper/trigger): 5 req / hour per IP
+Return JSON error { error: "Previše zahtjeva, pokušajte ponovo za X sekundi." } on limit hit.
+
+---
+
+## 2. SCORE FILTER BUG (routes/tenders.ts)
+The minScore/maxScore filter runs in JS after DB fetch — fix it.
+Move both conditions into the Drizzle WHERE clause on aiAnalysisTable.relevanceScore.
+Fix the count query to include the same JOIN + WHERE so pagination totals are accurate.
+
+---
+
+## 3. REAL DEADLINE FROM EJN API (services/ejnScraper.ts)
+Replace estimateDeadline() with a real fetch:
+  GET https://open.ejn.gov.ba/AnnouncementProcedureCalls({item.Id})?$format=json
+Read SubmissionDeadline (or DeadlineForSubmission — log the actual field name on first fetch).
+Fall back to +30 days only if the field is null/missing.
+Add a 10s timeout. If the detail fetch fails, log a warning and use the fallback — don't crash the scraper.
+
+---
+
+## 4. AUTO CRON SCRAPING (index.ts)
+Install `node-cron`. After server starts and seed completes, register:
+- EJN scraper: every 2 hours ("0 */2 * * *")
+- Log each auto-run with triggeredBy: "cron" in scraperLogsTable
+- Skip if a scrape is already running (reuse the existing isRunning flag in scraper.ts — export it)
+
+---
+
+## 5. FULL-TEXT SEARCH (routes/tenders.ts)
+The search param currently only filters title. Extend the ilike condition to also match:
+- description
+- contractingAuth
+Use OR logic: title ILIKE OR description ILIKE OR contractingAuth ILIKE.
+
+---
+
+## 6. BULK AI ANALYSIS ENDPOINT (routes/tenders.ts)
+Add POST /tenders/bulk-analyze
+Body: { limit?: number } (default 20, max 50)
+Logic:
+  1. Fetch tenders that have no entry in aiAnalysisTable (LEFT JOIN, IS NULL)
+  2. Analyze them in batches of 5 in parallel using Promise.allSettled
+  3. Return { analyzed: number, failed: number, errors: string[] }
+Apply the existing AI rate limit (10/15min) to this endpoint too.
+
+---
+
+## 7. AUTO NOTIFICATIONS AFTER SCRAPING (services/ejnScraper.ts + routes/scraper.ts)
+After runEjnScraper() completes and inserted > 0:
+  1. Find newly inserted tenders that already have relevanceScore >= 75 in aiAnalysisTable
+     (or queue them for analysis first if they don't have a score yet — skip notifications for now if no score)
+  2. Fetch all user IDs from usersTable
+  3. Insert one notification per user per high-relevance tender into notificationsTable:
+     { id: nanoid(), userId, title: "Novi relevantni tender", message: tender.title, read: false }
+  4. Cap at 10 notifications per scrape run to avoid spam.
+
+---
+
+## 8. HARDEN JWT SECRET (auth.ts + middlewares/auth.ts)
+The fallback JWT_SECRET is hardcoded as "asa_tender_jwt_secret_2026".
+If process.env.JWT_SECRET is not set, throw an error and refuse to start:
+  throw new Error("JWT_SECRET environment variable must be set in production")
+Only allow the fallback in NODE_ENV === "development".
+
+---
+
+## 9. INPUT VALIDATION (routes/tenders.ts, routes/auth.ts)
+Add basic validation — return 400 with a clear message for:
+- Login: email must be valid format, password min 6 chars
+- Notes POST: content max 5000 chars
+- Bulk analyze: limit must be 1–50
+- Chat POST: message max 2000 chars
+No external validation library needed — simple if-checks are fine.
+
+---
+
+## 10. XLSX EXPORT (routes/tenders.ts)
+Install `exceljs`. Add GET /tenders/export/xlsx (same filters as CSV export).
+Columns: ID, Naziv, Ugovorni organ, Entitet, Kategorija, Izvor, Status, Vrijednost (KM), Datum objave, Rok prijave, AI ocjena
+Formatting:
+- Header row: bold, background #1e3a5f, white text
+- Rows with relevanceScore >= 75: light green background (#e8f5e9)
+- Rows with deadline within 7 days: light orange background (#fff3e0)
+- Auto-fit column widths (set width to 20 for most, 40 for Naziv)
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Filename: ejn_tenderi_{YYYY-MM-DD}.xlsx
+
+---
+
+After all changes, run `tsc --noEmit` to verify no TypeScript errors.
+Do not change the frontend, seed data, or database schema.

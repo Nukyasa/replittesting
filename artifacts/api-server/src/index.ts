@@ -1,6 +1,13 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { seedDatabase } from "./seed";
+import cron from "node-cron";
+import { db } from "@workspace/db";
+import { scraperLogsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { nanoid } from "./lib/nanoid";
+import { runEjnScraper } from "./services/ejnScraper";
+import { scraperEvents } from "./routes/scraper";
 
 const rawPort = process.env["PORT"];
 
@@ -24,5 +31,61 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 
-  seedDatabase().catch((err) => logger.error({ err }, "Seed failed"));
+  seedDatabase().catch((seedErr) => logger.error({ err: seedErr }, "Seed failed"));
+
+  let cronRunning = false;
+
+  cron.schedule("0 */2 * * *", async () => {
+    if (cronRunning) {
+      logger.info("Cron: EJN scraper already running, skipping");
+      return;
+    }
+    cronRunning = true;
+    logger.info("Cron: Starting scheduled EJN scrape");
+
+    const [log] = await db
+      .insert(scraperLogsTable)
+      .values({
+        id: nanoid(),
+        source: "ejn",
+        triggeredBy: "cron",
+        startedAt: new Date(),
+        status: "running",
+      })
+      .returning();
+
+    try {
+      const newCount = await runEjnScraper(log.id);
+
+      await db
+        .update(scraperLogsTable)
+        .set({
+          completedAt: new Date(),
+          status: "completed",
+          tendersFound: newCount,
+          tendersNew: newCount,
+          tendersUpdated: 0,
+        })
+        .where(eq(scraperLogsTable.id, log.id));
+
+      scraperEvents.emit("progress", {
+        source: "ejn",
+        status: "completed",
+        message: `Cron: ${newCount} novih tendera uvezeno`,
+        tendersNew: newCount,
+      });
+
+      logger.info({ newCount }, "Cron: EJN scrape completed");
+    } catch (cronErr) {
+      logger.error({ err: cronErr }, "Cron: EJN scrape failed");
+      await db
+        .update(scraperLogsTable)
+        .set({ completedAt: new Date(), status: "failed", errors: String(cronErr) })
+        .where(eq(scraperLogsTable.id, log.id));
+    } finally {
+      cronRunning = false;
+    }
+  });
+
+  logger.info("Cron scheduler registered: EJN every 2 hours");
 });

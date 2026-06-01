@@ -1,0 +1,1 @@
+- [EJN v2 schema + scraper](ejn-v2.md) — Announcements endpoint has richer fields than AnnouncementProcedureCalls; tenderChangesTable tracks field-level diffs with hourly cron sync.

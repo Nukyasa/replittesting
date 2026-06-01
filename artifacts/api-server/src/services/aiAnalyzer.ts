@@ -34,7 +34,16 @@ const COMPANY_PROFILE = {
   ],
 };
 
-function getMockAnalysis(tender: { title: string; category: string }) {
+function getMockAnalysis(tender: {
+  title: string;
+  category: string;
+  estimatedValue?: number | null;
+  questionsDeadline?: Date | null;
+  hasEAuction?: boolean;
+  awardCriteria?: string | null;
+  guaranteeAmount?: number | null;
+  guaranteeType?: string | null;
+}) {
   const categories: Record<string, number> = {
     IT: 85,
     Osiguranje: 90,
@@ -87,6 +96,25 @@ function getMockAnalysis(tender: { title: string; category: string }) {
       "Reference lista",
       "Garancija za ozbiljnost ponude",
     ],
+    participationConditions: {
+      financial: "Minimalni godišnji prihod 200.000 KM za posljednje 2 godine",
+      technical: "Minimum 3 projekta sličnog obima u posljednje 3 godine",
+      legal: "Registracija u sudski registar, PDV broj, uvjerenje o nekažnjavanju",
+      experience: "Reference i sertifikati relevantni za oblast nabavke",
+    },
+    requiredDeclarations: [
+      "Izjava o nekažnjavanju (čl. 45. ZJN)",
+      "Izjava o izmirenim direktnim i indirektnim porezima",
+      "Izjava o poslovnoj sposobnosti (čl. 46. ZJN)",
+      "Izjava o prihvatanju uslova tendera",
+    ],
+    awardAnalysis: tender.awardCriteria
+      ? `Kriterij dodjele: ${tender.awardCriteria}. Ponuđači trebaju optimizirati ponudu prema navedenim kriterijima.`
+      : "Kriterij dodjele nije specificiran. Vjerovatno najniža cijena.",
+    guaranteeInfo: tender.guaranteeAmount
+      ? `Garancija za ozbiljnost ponude: ${tender.guaranteeAmount} KM (${tender.guaranteeType || "bankarska garancija"}). Obavezno priložiti uz ponudu.`
+      : "Garancija za ozbiljnost ponude nije navedena.",
+    estimatedPrepTime: "3-5 dana",
   };
 }
 
@@ -99,8 +127,16 @@ export async function analyzeTender(tender: {
   estimatedValue?: number | null;
   currency: string;
   deadline: Date;
+  questionsDeadline?: Date | null;
   entity: string;
   tenderType: string;
+  hasEAuction?: boolean;
+  awardCriteria?: string | null;
+  awardCriteriaDetails?: string | null;
+  guaranteeAmount?: number | null;
+  guaranteeType?: string | null;
+  tenderPreparationCost?: number | null;
+  cpvCodes?: string[];
 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -112,23 +148,59 @@ export async function analyzeTender(tender: {
   try {
     const client = new Anthropic({ apiKey });
 
-    const prompt = {
-      action: "analyze_tender",
-      tender: {
-        ...tender,
-        deadline: tender.deadline.toISOString(),
-      },
-      companyProfile: COMPANY_PROFILE,
-    };
+    const prompt = `Analiziraj ovaj tender iz BiH portala javnih nabavki i izvuci sve ključne informacije.
+
+TENDER PODACI:
+Naziv: ${tender.title}
+Ugovorni organ: ${tender.contractingAuth}
+Datum roka za pitanja: ${tender.questionsDeadline ? tender.questionsDeadline.toLocaleDateString("bs-BA") : "Nije navedeno"}
+Rok za prijem ponuda: ${tender.deadline.toLocaleDateString("bs-BA")}
+Procijenjena vrijednost: ${tender.estimatedValue ? `${tender.estimatedValue.toLocaleString("bs-BA")} ${tender.currency}` : "Nije navedena"}
+Kriterij dodjele: ${tender.awardCriteria || "Nije navedeno"}
+Detalji kriterija: ${tender.awardCriteriaDetails || "Nisu navedeni"}
+Troškovi pripreme ponude: ${tender.tenderPreparationCost ? `${tender.tenderPreparationCost} ${tender.currency}` : "Nisu navedeni"}
+Garancija: ${tender.guaranteeAmount ? `${tender.guaranteeAmount} ${tender.currency} (${tender.guaranteeType || ""})` : "Nije navedena"}
+E-aukcija: ${tender.hasEAuction ? "DA" : "NE"}
+CPV kategorija: ${tender.cpvCodes?.join(", ") || tender.category}
+Entitet: ${tender.entity}
+Opis: ${tender.description || "Nije dostupan"}
+
+Odgovori ISKLJUČIVO u JSON formatu (bez Markdown):
+{
+  "summary": "Kratki sažetak tendera (2-3 rečenice)",
+  "relevanceScore": 75,
+  "relevanceTags": ["tag1", "tag2"],
+  "competitionLevel": "high|medium|low",
+  "successProbability": 60,
+  "insuranceRelevance": "Objašnjenje relevantnosti za osiguravajuću kuću",
+  "keyRequirements": ["zahtjev 1", "zahtjev 2"],
+  "eligibilityCriteria": ["kriterij 1", "kriterij 2"],
+  "risks": [{"risk": "opis rizika", "severity": "high|medium|low"}],
+  "opportunities": ["prilika 1", "prilika 2"],
+  "redFlags": ["crvena zastavica 1"],
+  "estimatedWorkload": "2-3 sedmice, 2-3 osobe",
+  "suggestedApproach": "Preporučeni pristup pripremi ponude",
+  "requiredDocs": ["dokument 1", "dokument 2"],
+  "participationConditions": {
+    "financial": "finansijski uslovi učešća",
+    "technical": "tehnički uslovi",
+    "legal": "pravni uslovi / izjave",
+    "experience": "reference / iskustvo"
+  },
+  "requiredDeclarations": ["Izjava o nekažnjavanju (čl. 45)", "Izjava o izmirenim porezima"],
+  "awardAnalysis": "Analiza kriterija dodjele i kako optimizirati ponudu",
+  "guaranteeInfo": "Informacije o garancijama koje trebaju biti dostavljene",
+  "estimatedPrepTime": "3-5 dana"
+}`;
 
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2000,
+      max_tokens: 2500,
       system: SYSTEM_PROMPT,
       messages: [
         {
           role: "user",
-          content: JSON.stringify(prompt),
+          content: prompt,
         },
       ],
     });

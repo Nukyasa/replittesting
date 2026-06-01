@@ -23,10 +23,18 @@ export const tendersTable = pgTable("tenders", {
   currency: text("currency").notNull().default("KM"),
   publicationDate: timestamp("publication_date").notNull(),
   deadline: timestamp("deadline").notNull(),
+  questionsDeadline: timestamp("questions_deadline"),
   tenderType: text("tender_type").notNull(),
   entity: text("entity").notNull(),
   status: text("status").notNull().default("open"),
+  statusName: text("status_name"),
   sourceUrl: text("source_url").notNull(),
+  hasEAuction: boolean("has_e_auction").notNull().default(false),
+  awardCriteria: text("award_criteria"),
+  awardCriteriaDetails: text("award_criteria_details"),
+  guaranteeAmount: doublePrecision("guarantee_amount"),
+  guaranteeType: text("guarantee_type"),
+  tenderPreparationCost: doublePrecision("tender_preparation_cost"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -48,6 +56,11 @@ export const aiAnalysisTable = pgTable("ai_analysis", {
   successProbability: doublePrecision("success_probability").notNull().default(0),
   insuranceRelevance: text("insurance_relevance").notNull(),
   requiredDocs: jsonb("required_docs").notNull().default([]),
+  participationConditions: jsonb("participation_conditions").default(null),
+  requiredDeclarations: jsonb("required_declarations").default(null),
+  awardAnalysis: text("award_analysis"),
+  guaranteeInfo: text("guarantee_info"),
+  estimatedPrepTime: text("estimated_prep_time"),
   analyzedAt: timestamp("analyzed_at").notNull().defaultNow(),
   analysisVersion: text("analysis_version").notNull().default("1"),
 });
@@ -121,6 +134,16 @@ export const scraperLogsTable = pgTable("scraper_logs", {
   status: text("status").notNull().default("running"),
 });
 
+export const tenderChangesTable = pgTable("tender_changes", {
+  id: text("id").primaryKey(),
+  tenderId: text("tender_id").notNull().references(() => tendersTable.id, { onDelete: "cascade" }),
+  field: text("field").notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  changedAt: timestamp("changed_at").notNull().defaultNow(),
+  notified: boolean("notified").notNull().default(false),
+});
+
 export const insertTenderSchema = createInsertSchema(tendersTable);
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true });
 
@@ -135,3 +158,4 @@ export type UserTender = typeof userTendersTable.$inferSelect;
 export type Note = typeof notesTable.$inferSelect;
 export type Notification = typeof notificationsTable.$inferSelect;
 export type ScraperLog = typeof scraperLogsTable.$inferSelect;
+export type TenderChange = typeof tenderChangesTable.$inferSelect;

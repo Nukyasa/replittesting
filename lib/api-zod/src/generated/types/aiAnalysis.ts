@@ -5,6 +5,7 @@
  * ASA Tender Intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { ParticipationConditions } from './participationConditions';
 import type { RiskItem } from './riskItem';
 
 export interface AiAnalysis {
@@ -24,5 +25,13 @@ export interface AiAnalysis {
   successProbability: number;
   insuranceRelevance: string;
   requiredDocs: string[];
+  participationConditions?: ParticipationConditions;
+  requiredDeclarations?: string[];
+  /** @nullable */
+  awardAnalysis?: string | null;
+  /** @nullable */
+  guaranteeInfo?: string | null;
+  /** @nullable */
+  estimatedPrepTime?: string | null;
   analyzedAt: Date;
 }

@@ -7,6 +7,7 @@ import {
   notesTable,
   userTendersTable,
   usersTable,
+  tenderChangesTable,
 } from "@workspace/db";
 import { eq, and, or, desc, asc, ilike, gte, lte, sql, inArray, isNull } from "drizzle-orm";
 import { authMiddleware } from "../middlewares/auth";
@@ -396,12 +397,20 @@ tendersRouter.get("/:id", async (req, res) => {
     .where(and(eq(userTendersTable.tenderId, id), eq(userTendersTable.userId, userId)))
     .limit(1);
 
+  const changes = await db
+    .select()
+    .from(tenderChangesTable)
+    .where(eq(tenderChangesTable.tenderId, id))
+    .orderBy(desc(tenderChangesTable.changedAt))
+    .limit(20);
+
   res.json({
     ...tender,
     relevanceScore: analysis?.relevanceScore ?? null,
     aiAnalysis: analysis ?? null,
     documents: docs,
     userTender: userTender ?? null,
+    changes,
   });
 });
 

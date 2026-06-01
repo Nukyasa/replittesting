@@ -807,14 +807,31 @@ components:
         deadline:
           type: string
           format: date-time
+        questionsDeadline:
+          type: ["string", "null"]
+          format: date-time
         tenderType:
           type: string
         entity:
           type: string
         status:
           type: string
+        statusName:
+          type: ["string", "null"]
         sourceUrl:
           type: string
+        hasEAuction:
+          type: boolean
+        awardCriteria:
+          type: ["string", "null"]
+        awardCriteriaDetails:
+          type: ["string", "null"]
+        guaranteeAmount:
+          type: ["number", "null"]
+        guaranteeType:
+          type: ["string", "null"]
+        tenderPreparationCost:
+          type: ["number", "null"]
         relevanceScore:
           type: ["number", "null"]
         createdAt:
@@ -835,6 +852,7 @@ components:
         - entity
         - status
         - sourceUrl
+        - hasEAuction
         - createdAt
 
     TenderList:
@@ -890,14 +908,31 @@ components:
         deadline:
           type: string
           format: date-time
+        questionsDeadline:
+          type: ["string", "null"]
+          format: date-time
         tenderType:
           type: string
         entity:
           type: string
         status:
           type: string
+        statusName:
+          type: ["string", "null"]
         sourceUrl:
           type: string
+        hasEAuction:
+          type: boolean
+        awardCriteria:
+          type: ["string", "null"]
+        awardCriteriaDetails:
+          type: ["string", "null"]
+        guaranteeAmount:
+          type: ["number", "null"]
+        guaranteeType:
+          type: ["string", "null"]
+        tenderPreparationCost:
+          type: ["number", "null"]
         relevanceScore:
           type: ["number", "null"]
         createdAt:
@@ -911,6 +946,10 @@ components:
             $ref: "#/components/schemas/Document"
         userTender:
           $ref: "#/components/schemas/UserTender"
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenderChange"
       required:
         - id
         - externalId
@@ -926,7 +965,22 @@ components:
         - entity
         - status
         - sourceUrl
+        - hasEAuction
         - createdAt
+        - documents
+        - changes
+
+    ParticipationConditions:
+      type: object
+      properties:
+        financial:
+          type: ["string", "null"]
+        technical:
+          type: ["string", "null"]
+        legal:
+          type: ["string", "null"]
+        experience:
+          type: ["string", "null"]
 
     AiAnalysis:
       type: object
@@ -977,6 +1031,18 @@ components:
           type: array
           items:
             type: string
+        participationConditions:
+          $ref: "#/components/schemas/ParticipationConditions"
+        requiredDeclarations:
+          type: array
+          items:
+            type: string
+        awardAnalysis:
+          type: ["string", "null"]
+        guaranteeInfo:
+          type: ["string", "null"]
+        estimatedPrepTime:
+          type: ["string", "null"]
         analyzedAt:
           type: string
           format: date-time
@@ -998,6 +1064,31 @@ components:
         - insuranceRelevance
         - requiredDocs
         - analyzedAt
+
+    TenderChange:
+      type: object
+      properties:
+        id:
+          type: string
+        tenderId:
+          type: string
+        field:
+          type: string
+        oldValue:
+          type: ["string", "null"]
+        newValue:
+          type: ["string", "null"]
+        changedAt:
+          type: string
+          format: date-time
+        notified:
+          type: boolean
+      required:
+        - id
+        - tenderId
+        - field
+        - changedAt
+        - notified
 
     RiskItem:
       type: object

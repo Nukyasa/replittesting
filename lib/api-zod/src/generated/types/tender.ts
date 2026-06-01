@@ -21,10 +21,25 @@ export interface Tender {
   currency: string;
   publicationDate: Date;
   deadline: Date;
+  /** @nullable */
+  questionsDeadline?: Date | null;
   tenderType: string;
   entity: string;
   status: string;
+  /** @nullable */
+  statusName?: string | null;
   sourceUrl: string;
+  hasEAuction: boolean;
+  /** @nullable */
+  awardCriteria?: string | null;
+  /** @nullable */
+  awardCriteriaDetails?: string | null;
+  /** @nullable */
+  guaranteeAmount?: number | null;
+  /** @nullable */
+  guaranteeType?: string | null;
+  /** @nullable */
+  tenderPreparationCost?: number | null;
   /** @nullable */
   relevanceScore?: number | null;
   createdAt: Date;

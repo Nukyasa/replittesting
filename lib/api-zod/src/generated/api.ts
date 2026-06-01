@@ -86,10 +86,18 @@ export const ListTendersResponse = zod.object({
   "currency": zod.string(),
   "publicationDate": zod.coerce.date(),
   "deadline": zod.coerce.date(),
+  "questionsDeadline": zod.coerce.date().nullish(),
   "tenderType": zod.string(),
   "entity": zod.string(),
   "status": zod.string(),
+  "statusName": zod.string().nullish(),
   "sourceUrl": zod.string(),
+  "hasEAuction": zod.boolean(),
+  "awardCriteria": zod.string().nullish(),
+  "awardCriteriaDetails": zod.string().nullish(),
+  "guaranteeAmount": zod.number().nullish(),
+  "guaranteeType": zod.string().nullish(),
+  "tenderPreparationCost": zod.number().nullish(),
   "relevanceScore": zod.number().nullish(),
   "createdAt": zod.coerce.date()
 })),
@@ -120,10 +128,18 @@ export const GetTenderResponse = zod.object({
   "currency": zod.string(),
   "publicationDate": zod.coerce.date(),
   "deadline": zod.coerce.date(),
+  "questionsDeadline": zod.coerce.date().nullish(),
   "tenderType": zod.string(),
   "entity": zod.string(),
   "status": zod.string(),
+  "statusName": zod.string().nullish(),
   "sourceUrl": zod.string(),
+  "hasEAuction": zod.boolean(),
+  "awardCriteria": zod.string().nullish(),
+  "awardCriteriaDetails": zod.string().nullish(),
+  "guaranteeAmount": zod.number().nullish(),
+  "guaranteeType": zod.string().nullish(),
+  "tenderPreparationCost": zod.number().nullish(),
   "relevanceScore": zod.number().nullish(),
   "createdAt": zod.coerce.date(),
   "aiAnalysis": zod.object({
@@ -146,6 +162,16 @@ export const GetTenderResponse = zod.object({
   "successProbability": zod.number(),
   "insuranceRelevance": zod.string(),
   "requiredDocs": zod.array(zod.string()),
+  "participationConditions": zod.object({
+  "financial": zod.string().nullish(),
+  "technical": zod.string().nullish(),
+  "legal": zod.string().nullish(),
+  "experience": zod.string().nullish()
+}).optional(),
+  "requiredDeclarations": zod.array(zod.string()).optional(),
+  "awardAnalysis": zod.string().nullish(),
+  "guaranteeInfo": zod.string().nullish(),
+  "estimatedPrepTime": zod.string().nullish(),
   "analyzedAt": zod.coerce.date()
 }).optional(),
   "documents": zod.array(zod.object({
@@ -158,7 +184,7 @@ export const GetTenderResponse = zod.object({
   "parsedText": zod.string().nullish(),
   "fileSize": zod.number().nullish(),
   "createdAt": zod.coerce.date()
-})).optional(),
+})),
   "userTender": zod.object({
   "id": zod.string(),
   "userId": zod.string(),
@@ -168,7 +194,16 @@ export const GetTenderResponse = zod.object({
   "assignedTo": zod.string().nullish(),
   "internalDeadline": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date()
-}).optional()
+}).optional(),
+  "changes": zod.array(zod.object({
+  "id": zod.string(),
+  "tenderId": zod.string(),
+  "field": zod.string(),
+  "oldValue": zod.string().nullish(),
+  "newValue": zod.string().nullish(),
+  "changedAt": zod.coerce.date(),
+  "notified": zod.boolean()
+}))
 })
 
 
@@ -199,6 +234,16 @@ export const GetTenderAnalysisResponse = zod.object({
   "successProbability": zod.number(),
   "insuranceRelevance": zod.string(),
   "requiredDocs": zod.array(zod.string()),
+  "participationConditions": zod.object({
+  "financial": zod.string().nullish(),
+  "technical": zod.string().nullish(),
+  "legal": zod.string().nullish(),
+  "experience": zod.string().nullish()
+}).optional(),
+  "requiredDeclarations": zod.array(zod.string()).optional(),
+  "awardAnalysis": zod.string().nullish(),
+  "guaranteeInfo": zod.string().nullish(),
+  "estimatedPrepTime": zod.string().nullish(),
   "analyzedAt": zod.coerce.date()
 })
 
@@ -230,6 +275,16 @@ export const AnalyzeTenderResponse = zod.object({
   "successProbability": zod.number(),
   "insuranceRelevance": zod.string(),
   "requiredDocs": zod.array(zod.string()),
+  "participationConditions": zod.object({
+  "financial": zod.string().nullish(),
+  "technical": zod.string().nullish(),
+  "legal": zod.string().nullish(),
+  "experience": zod.string().nullish()
+}).optional(),
+  "requiredDeclarations": zod.array(zod.string()).optional(),
+  "awardAnalysis": zod.string().nullish(),
+  "guaranteeInfo": zod.string().nullish(),
+  "estimatedPrepTime": zod.string().nullish(),
   "analyzedAt": zod.coerce.date()
 })
 
@@ -454,10 +509,18 @@ export const GetAnalyticsExpiringResponseItem = zod.object({
   "currency": zod.string(),
   "publicationDate": zod.coerce.date(),
   "deadline": zod.coerce.date(),
+  "questionsDeadline": zod.coerce.date().nullish(),
   "tenderType": zod.string(),
   "entity": zod.string(),
   "status": zod.string(),
+  "statusName": zod.string().nullish(),
   "sourceUrl": zod.string(),
+  "hasEAuction": zod.boolean(),
+  "awardCriteria": zod.string().nullish(),
+  "awardCriteriaDetails": zod.string().nullish(),
+  "guaranteeAmount": zod.number().nullish(),
+  "guaranteeType": zod.string().nullish(),
+  "tenderPreparationCost": zod.number().nullish(),
   "relevanceScore": zod.number().nullish(),
   "createdAt": zod.coerce.date()
 })

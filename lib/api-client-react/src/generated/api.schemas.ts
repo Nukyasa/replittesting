@@ -69,10 +69,25 @@ export interface Tender {
   currency: string;
   publicationDate: string;
   deadline: string;
+  /** @nullable */
+  questionsDeadline?: string | null;
   tenderType: string;
   entity: string;
   status: string;
+  /** @nullable */
+  statusName?: string | null;
   sourceUrl: string;
+  hasEAuction: boolean;
+  /** @nullable */
+  awardCriteria?: string | null;
+  /** @nullable */
+  awardCriteriaDetails?: string | null;
+  /** @nullable */
+  guaranteeAmount?: number | null;
+  /** @nullable */
+  guaranteeType?: string | null;
+  /** @nullable */
+  tenderPreparationCost?: number | null;
   /** @nullable */
   relevanceScore?: number | null;
   createdAt: string;
@@ -89,6 +104,17 @@ export interface TenderList {
 export interface RiskItem {
   risk: string;
   severity: string;
+}
+
+export interface ParticipationConditions {
+  /** @nullable */
+  financial?: string | null;
+  /** @nullable */
+  technical?: string | null;
+  /** @nullable */
+  legal?: string | null;
+  /** @nullable */
+  experience?: string | null;
 }
 
 export interface AiAnalysis {
@@ -108,6 +134,14 @@ export interface AiAnalysis {
   successProbability: number;
   insuranceRelevance: string;
   requiredDocs: string[];
+  participationConditions?: ParticipationConditions;
+  requiredDeclarations?: string[];
+  /** @nullable */
+  awardAnalysis?: string | null;
+  /** @nullable */
+  guaranteeInfo?: string | null;
+  /** @nullable */
+  estimatedPrepTime?: string | null;
   analyzedAt: string;
 }
 
@@ -139,6 +173,18 @@ export interface UserTender {
   createdAt: string;
 }
 
+export interface TenderChange {
+  id: string;
+  tenderId: string;
+  field: string;
+  /** @nullable */
+  oldValue?: string | null;
+  /** @nullable */
+  newValue?: string | null;
+  changedAt: string;
+  notified: boolean;
+}
+
 export interface TenderDetail {
   id: string;
   externalId: string;
@@ -154,16 +200,32 @@ export interface TenderDetail {
   currency: string;
   publicationDate: string;
   deadline: string;
+  /** @nullable */
+  questionsDeadline?: string | null;
   tenderType: string;
   entity: string;
   status: string;
+  /** @nullable */
+  statusName?: string | null;
   sourceUrl: string;
+  hasEAuction: boolean;
+  /** @nullable */
+  awardCriteria?: string | null;
+  /** @nullable */
+  awardCriteriaDetails?: string | null;
+  /** @nullable */
+  guaranteeAmount?: number | null;
+  /** @nullable */
+  guaranteeType?: string | null;
+  /** @nullable */
+  tenderPreparationCost?: number | null;
   /** @nullable */
   relevanceScore?: number | null;
   createdAt: string;
   aiAnalysis?: AiAnalysis;
-  documents?: Document[];
+  documents: Document[];
   userTender?: UserTender;
+  changes: TenderChange[];
 }
 
 export interface Note {

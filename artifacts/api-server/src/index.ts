@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import { scraperLogsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { nanoid } from "./lib/nanoid";
-import { runEjnScraper } from "./services/ejnScraper";
+import { runEjnScraper, syncActiveEjnTenders, sendDeadlineReminders } from "./services/ejnScraper";
 import { scraperEvents } from "./routes/scraper";
 
 const rawPort = process.env["PORT"];
@@ -87,5 +87,23 @@ app.listen(port, (err) => {
     }
   });
 
-  logger.info("Cron scheduler registered: EJN every 2 hours");
+  cron.schedule("0 * * * *", async () => {
+    logger.info("Cron: Syncing active tenders for changes");
+    try {
+      await syncActiveEjnTenders();
+    } catch (err) {
+      logger.error({ err }, "Cron: Active tender sync failed");
+    }
+  });
+
+  cron.schedule("0 8 * * *", async () => {
+    logger.info("Cron: Sending deadline reminders");
+    try {
+      await sendDeadlineReminders();
+    } catch (err) {
+      logger.error({ err }, "Cron: Deadline reminders failed");
+    }
+  });
+
+  logger.info("Cron schedulers registered: EJN every 2h, sync every 1h, deadlines daily at 8:00");
 });

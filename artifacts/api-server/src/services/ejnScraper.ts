@@ -10,96 +10,127 @@ import {
 import { eq, gte, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid";
 import { logger } from "../lib/logger";
+import { scraperEvents } from "../lib/scraperEvents";
 
 const EJN_BASE = "https://open.ejn.gov.ba";
 
-interface EjnAnnouncement {
+const INSURANCE_FILTER =
+  "contains(tolower(ProcedureName),'osiguranj') or " +
+  "contains(tolower(ProcedureName),'kasko') or " +
+  "contains(tolower(ProcedureName),'insurance') or " +
+  "contains(tolower(ContractCategoryName),'osiguranj')";
+
+const LOT_SELECT = [
+  "Id", "ProcedureId", "ProcedureName",
+  "ContractingAuthorityName", "ContractingAuthorityCityName",
+  "ContractingAuthorityAdministrativeUnitName",
+  "EstimatedValue", "Status",
+  "ProcurementPhaseOfferSubmissionDeadline",
+  "ApplicationDeadlineDateTime",
+  "IsAuctionOnline", "AwardCriterion",
+  "ContractCategoryName", "ContractType",
+  "ShortDescription", "LastUpdated",
+].join(",");
+
+interface EjnLot {
   Id: number;
-  Subject?: string;
-  PublicationDate?: string;
-  DeadlineDate?: string;
-  QuestionsDeadline?: string;
-  EstimatedValue?: number;
-  CurrencyCode?: string;
+  ProcedureId?: number;
+  ProcedureName?: string;
   ContractingAuthorityName?: string;
   ContractingAuthorityCityName?: string;
-  ContractingAuthorityCountryCode?: string;
-  ProcurementType?: string;
-  ProcurementTypeName?: string;
-  StatusId?: number;
-  StatusName?: string;
-  CpvCode?: string;
-  CpvName?: string;
-  HasEAuction?: boolean;
-  AnnouncementUrl?: string;
-  AwardCriteria?: string;
-  AwardCriteriaDetails?: string;
-  TenderPreparationCost?: number;
-  RequiredGuaranteeAmount?: number;
-  RequiredGuaranteeType?: string;
-  IsLatestVersion?: boolean;
+  ContractingAuthorityAdministrativeUnitName?: string;
+  EstimatedValue?: number;
+  Status?: string;
+  ProcurementPhaseOfferSubmissionDeadline?: string;
+  ApplicationDeadlineDateTime?: string;
+  IsAuctionOnline?: boolean;
+  AwardCriterion?: string;
+  ContractCategoryName?: string;
+  ContractType?: string;
+  ShortDescription?: string;
+  LastUpdated?: string;
 }
 
-function mapStatus(statusId?: number): string {
-  switch (statusId) {
-    case 1: return "open";
-    case 2: return "closed";
-    case 3: return "cancelled";
+function qs(s: string): string {
+  return s.replace(/ /g, "%20").replace(/'/g, "%27");
+}
+
+function buildLotsUrl(top: number, skip: number, extraFilter?: string): string {
+  const filter = extraFilter
+    ? `(${INSURANCE_FILTER}) and (${extraFilter})`
+    : `(${INSURANCE_FILTER})`;
+  return (
+    `${EJN_BASE}/Lots` +
+    `?$top=${top}` +
+    `&$skip=${skip}` +
+    `&$format=json` +
+    `&$select=${LOT_SELECT}` +
+    `&$filter=${qs(filter)}`
+  );
+}
+
+function mapStatus(status?: string): string {
+  switch ((status || "").toLowerCase()) {
+    case "announced": return "open";
+    case "awarded": return "closed";
+    case "cancelled":
+    case "terminated": return "cancelled";
     default: return "open";
   }
 }
 
-function mapStatusName(statusId?: number, statusName?: string): string {
-  if (statusName) return statusName;
-  switch (statusId) {
-    case 1: return "Aktivan";
-    case 2: return "Zatvoren";
-    case 3: return "Poništen";
+function mapStatusName(status?: string): string {
+  switch ((status || "").toLowerCase()) {
+    case "announced": return "Aktivan";
+    case "awarded": return "Dodijeljen";
+    case "cancelled": return "Poništen";
+    case "terminated": return "Prekinut";
     default: return "Nepoznat";
   }
 }
 
-function mapEntity(cityName?: string, countryCode?: string): string {
+function mapEntity(unitName?: string, cityName?: string): string {
+  const unit = (unitName || "").toLowerCase();
   const city = (cityName || "").toLowerCase();
-  const country = (countryCode || "").toLowerCase();
 
-  if (country && country !== "ba") return "International";
-  if (city.includes("banja luka") || city.includes("prijedor") || city.includes("bijeljina") || city.includes("trebinje")) return "RS";
+  if (unit.includes("federacija") || unit.includes("kanton")) return "FBiH";
+  if (unit.includes("republika srpska")) return "RS";
+  if (unit.includes("brčko") || unit.includes("brcko") || city.includes("brčko") || city.includes("brcko")) return "BD";
+  if (city.includes("banja luka") || city.includes("trebinje") || city.includes("bijeljina") || city.includes("prijedor")) return "RS";
   if (city.includes("mostar") || city.includes("sarajevo") || city.includes("tuzla") || city.includes("zenica")) return "FBiH";
-  if (city.includes("brčko") || city.includes("brcko")) return "BD";
   return "FBiH";
 }
 
-function mapCategory(procurementType?: string, cpvName?: string): string {
-  const cat = (cpvName || "").toLowerCase();
-  const type = (procurementType || "").toLowerCase();
+function mapCategory(categoryName?: string, contractType?: string): string {
+  const cat = (categoryName || "").toLowerCase();
+  const type = (contractType || "").toLowerCase();
 
-  if (cat.includes("osigur") || cat.includes("insurance")) return "Osiguranje";
-  if (cat.includes("it") || cat.includes("informatič") || cat.includes("softver") || cat.includes("telekomunikac") || cat.includes("računar")) return "IT usluge";
-  if (cat.includes("građevin") || cat.includes("radovi") || type.includes("works")) return "Građevinski radovi";
+  if (cat.includes("osiguranj") || cat.includes("insurance")) return "Osiguranje";
+  if (cat.includes("informatič") || cat.includes("softver") || cat.includes("telekomunikac") || cat.includes("it usluge")) return "IT usluge";
+  if (cat.includes("građevin") || type === "works") return "Građevinski radovi";
   if (cat.includes("medicin") || cat.includes("farmaceutsk") || cat.includes("zdravstv")) return "Medicinska oprema";
-  if (cat.includes("uredsk") || cat.includes("kancelarij") || cat.includes("papir")) return "Uredski materijal";
-  if (cat.includes("konsalt") || cat.includes("savjet") || cat.includes("legal") || cat.includes("pravni")) return "Konsalting";
+  if (cat.includes("uredsk") || cat.includes("kancelarij")) return "Uredski materijal";
+  if (cat.includes("konsalt") || cat.includes("savjet") || cat.includes("pravni")) return "Konsalting";
   if (cat.includes("vozil") || cat.includes("transport") || cat.includes("prijevoz")) return "Vozila i transport";
   if (cat.includes("čišćenj") || cat.includes("higijen")) return "Komunalne usluge";
-  if (cat.includes("marketing") || cat.includes("reklam") || cat.includes("oglašav")) return "Marketing";
-  if (type.includes("services")) return "Usluge";
-  if (type.includes("works")) return "Radovi";
-  if (type.includes("supplies")) return "Nabavka opreme";
+  if (cat.includes("marketing") || cat.includes("reklam")) return "Marketing";
+  if (type === "services" || cat.includes("usluge")) return "Usluge";
+  if (type === "works") return "Radovi";
+  if (type === "goods" || cat.includes("kupovina")) return "Nabavka opreme";
   return "Ostalo";
 }
 
-function mapSource(procurementType?: string): string {
-  const t = (procurementType || "").toLowerCase();
-  if (t.includes("open") || t.includes("otvor")) return "EJN-Otvoreni";
-  if (t.includes("restrict") || t.includes("ogranič")) return "EJN-Ograničeni";
-  if (t.includes("direct") || t.includes("direktn")) return "EJN-Direktni";
-  return "EJN";
+function mapSource(contractType?: string): string {
+  switch ((contractType || "").toLowerCase()) {
+    case "services": return "EJN-Usluge";
+    case "goods": return "EJN-Roba";
+    case "works": return "EJN-Radovi";
+    default: return "EJN";
+  }
 }
 
-function fallbackDeadline(publicationDate?: string): Date {
-  const base = publicationDate ? new Date(publicationDate) : new Date();
-  return new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+function fallbackDeadline(): Date {
+  return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 }
 
 async function detectAndSaveChanges(
@@ -111,11 +142,12 @@ async function detectAndSaveChanges(
     status: string;
     title: string;
   },
-  live: EjnAnnouncement
+  live: EjnLot
 ): Promise<void> {
   const changes: Array<{ field: string; oldValue: string; newValue: string }> = [];
 
-  const newDeadline = live.DeadlineDate ? new Date(live.DeadlineDate) : null;
+  const newDeadline = live.ProcurementPhaseOfferSubmissionDeadline
+    ? new Date(live.ProcurementPhaseOfferSubmissionDeadline) : null;
   if (newDeadline && existingTender.deadline.getTime() !== newDeadline.getTime()) {
     changes.push({
       field: "deadline",
@@ -124,17 +156,16 @@ async function detectAndSaveChanges(
     });
   }
 
-  const newQuestionsDeadline = live.QuestionsDeadline ? new Date(live.QuestionsDeadline) : null;
+  const newQD = live.ApplicationDeadlineDateTime ? new Date(live.ApplicationDeadlineDateTime) : null;
   const existingQD = existingTender.questionsDeadline;
   if (
-    (newQuestionsDeadline && !existingQD) ||
-    (!newQuestionsDeadline && existingQD) ||
-    (newQuestionsDeadline && existingQD && newQuestionsDeadline.getTime() !== existingQD.getTime())
+    (newQD && !existingQD) || (!newQD && existingQD) ||
+    (newQD && existingQD && newQD.getTime() !== existingQD.getTime())
   ) {
     changes.push({
       field: "questionsDeadline",
       oldValue: existingQD ? existingQD.toISOString() : "N/A",
-      newValue: newQuestionsDeadline ? newQuestionsDeadline.toISOString() : "N/A",
+      newValue: newQD ? newQD.toISOString() : "N/A",
     });
   }
 
@@ -147,7 +178,7 @@ async function detectAndSaveChanges(
     });
   }
 
-  const newStatus = mapStatus(live.StatusId);
+  const newStatus = mapStatus(live.Status);
   if (existingTender.status !== newStatus) {
     changes.push({
       field: "status",
@@ -195,14 +226,9 @@ async function detectAndSaveChanges(
 
 async function sendHighRelevanceNotifications(insertedIds: string[]): Promise<void> {
   if (insertedIds.length === 0) return;
-
   try {
     const highScoreTenders = await db
-      .select({
-        id: tendersTable.id,
-        title: tendersTable.title,
-        relevanceScore: aiAnalysisTable.relevanceScore,
-      })
+      .select({ id: tendersTable.id, title: tendersTable.title, relevanceScore: aiAnalysisTable.relevanceScore })
       .from(tendersTable)
       .innerJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
       .where(gte(aiAnalysisTable.relevanceScore, 75))
@@ -210,11 +236,9 @@ async function sendHighRelevanceNotifications(insertedIds: string[]): Promise<vo
 
     const relevantIds = new Set(insertedIds);
     const matched = highScoreTenders.filter((t) => relevantIds.has(t.id));
-
     if (matched.length === 0) return;
 
     const allUsers = await db.select({ id: usersTable.id }).from(usersTable);
-
     const notifications = [];
     for (const tender of matched.slice(0, 10)) {
       for (const user of allUsers) {
@@ -250,41 +274,35 @@ export async function runEjnScraper(logId: string, signal?: AbortSignal): Promis
   while (hasMore) {
     if (signal?.aborted) break;
 
-    const params = new URLSearchParams({
-      "$top": String(top),
-      "$skip": String(skip),
-      "$orderby": "PublicationDate desc",
-      "$filter": "IsLatestVersion eq true",
-      "$format": "json",
-    });
+    const url = buildLotsUrl(top, skip);
 
-    const url = `${EJN_BASE}/Announcements?${params}`;
-    let items: EjnAnnouncement[] = [];
-
+    let items: EjnLot[] = [];
     try {
       const response = await fetch(url, {
         headers: { Accept: "application/json", "User-Agent": "ASA-Tender-Intelligence/1.0" },
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) {
-        logger.warn({ status: response.status }, "EJN Announcements API non-OK response");
+        logger.warn({ status: response.status, url }, "EJN Lots API non-OK response");
         break;
       }
 
-      const data = await response.json() as { value?: EjnAnnouncement[] };
+      const data = await response.json() as { value?: EjnLot[] };
       items = data.value || [];
     } catch (err) {
-      logger.error({ err }, "EJN Announcements fetch failed");
+      logger.error({ err }, "EJN Lots fetch failed");
       break;
     }
 
     if (items.length === 0) break;
 
+    logger.info({ count: items.length, skip }, "EJN insurance lots fetched");
+
     for (const item of items) {
       if (signal?.aborted) break;
 
-      const externalId = `EJN-${item.Id}`;
+      const externalId = `EJN-LOT-${item.Id}`;
 
       const [existing] = await db
         .select({
@@ -305,47 +323,59 @@ export async function runEjnScraper(logId: string, signal?: AbortSignal): Promis
         continue;
       }
 
-      const category = mapCategory(item.ProcurementType, item.CpvName);
-      const entity = mapEntity(item.ContractingAuthorityCityName, item.ContractingAuthorityCountryCode);
-      const source = mapSource(item.ProcurementType);
-      const status = mapStatus(item.StatusId);
-      const statusName = mapStatusName(item.StatusId, item.StatusName);
+      const category = mapCategory(item.ContractCategoryName, item.ContractType);
+      const entity = mapEntity(item.ContractingAuthorityAdministrativeUnitName, item.ContractingAuthorityCityName);
+      const source = mapSource(item.ContractType);
+      const status = mapStatus(item.Status);
+      const statusName = mapStatusName(item.Status);
 
-      const deadline = item.DeadlineDate
-        ? new Date(item.DeadlineDate)
-        : fallbackDeadline(item.PublicationDate);
+      const deadline = item.ProcurementPhaseOfferSubmissionDeadline
+        ? new Date(item.ProcurementPhaseOfferSubmissionDeadline)
+        : fallbackDeadline();
 
-      const questionsDeadline = item.QuestionsDeadline ? new Date(item.QuestionsDeadline) : null;
+      const questionsDeadline = item.ApplicationDeadlineDateTime
+        ? new Date(item.ApplicationDeadlineDateTime) : null;
 
-      const ejnLink = item.AnnouncementUrl ||
-        (item.Id ? `https://next.ejn.gov.ba/bs-latn-ba/procurements/announcement/${item.Id}` : "");
+      const ejnLink = `https://next.ejn.gov.ba/bs-latn-ba/procurements/procedure-call/${item.ProcedureId ?? item.Id}`;
 
       const tenderId = nanoid();
       await db.insert(tendersTable).values({
         id: tenderId,
         externalId,
-        title: item.Subject || `Tender ${item.Id}`,
+        title: item.ProcedureName || `Lot ${item.Id}`,
         contractingAuth: item.ContractingAuthorityName || "N/A",
         entity,
         category,
         source,
-        tenderType: item.ProcurementType || "Services",
+        tenderType: item.ContractType || "Services",
         status,
         statusName,
-        publicationDate: item.PublicationDate ? new Date(item.PublicationDate) : new Date(),
+        publicationDate: item.LastUpdated ? new Date(item.LastUpdated) : new Date(),
         deadline,
         questionsDeadline,
         estimatedValue: item.EstimatedValue ?? null,
-        currency: item.CurrencyCode || "KM",
-        cpvCodes: [item.CpvCode, item.CpvName].filter(Boolean) as string[],
-        description: item.CpvName ? `${item.ProcurementTypeName || ""} — ${item.CpvName}`.trim() : null,
+        currency: "KM",
+        cpvCodes: [],
+        description: item.ShortDescription || item.ContractCategoryName || null,
         sourceUrl: ejnLink,
-        hasEAuction: item.HasEAuction ?? false,
-        awardCriteria: item.AwardCriteria || null,
-        awardCriteriaDetails: item.AwardCriteriaDetails || null,
-        guaranteeAmount: item.RequiredGuaranteeAmount ?? null,
-        guaranteeType: item.RequiredGuaranteeType || null,
-        tenderPreparationCost: item.TenderPreparationCost ?? null,
+        hasEAuction: item.IsAuctionOnline ?? false,
+        awardCriteria: item.AwardCriterion || null,
+        awardCriteriaDetails: null,
+        guaranteeAmount: null,
+        guaranteeType: null,
+        tenderPreparationCost: null,
+      });
+
+      scraperEvents.emit("new_tender", {
+        tender: {
+          id: tenderId,
+          title: item.ProcedureName || `Lot ${item.Id}`,
+          contractingAuth: item.ContractingAuthorityName || "N/A",
+          estimatedValue: item.EstimatedValue ?? null,
+          currency: "KM",
+          deadline: deadline.toISOString(),
+        },
+        isInsurance: true,
       });
 
       insertedIds.push(tenderId);
@@ -361,7 +391,7 @@ export async function runEjnScraper(logId: string, signal?: AbortSignal): Promis
     if (skip >= 500) break;
   }
 
-  logger.info({ inserted, updated, logId }, "EJN scraper finished");
+  logger.info({ inserted, updated, logId }, "EJN insurance scraper finished");
 
   if (inserted > 0) {
     await sendHighRelevanceNotifications(insertedIds);
@@ -389,11 +419,11 @@ export async function syncActiveEjnTenders(): Promise<void> {
   let changed = 0;
 
   for (const tender of activeTenders) {
-    const ejnNumId = tender.externalId.replace("EJN-", "");
+    const ejnNumId = tender.externalId.replace("EJN-LOT-", "").replace("EJN-", "");
     if (!ejnNumId || isNaN(Number(ejnNumId))) continue;
 
     try {
-      const url = `${EJN_BASE}/Announcements(${ejnNumId})?$format=json`;
+      const url = `${EJN_BASE}/Lots(${ejnNumId})?$format=json&$select=${LOT_SELECT}`;
       const response = await fetch(url, {
         headers: { Accept: "application/json", "User-Agent": "ASA-Tender-Intelligence/1.0" },
         signal: AbortSignal.timeout(10000),
@@ -401,7 +431,7 @@ export async function syncActiveEjnTenders(): Promise<void> {
 
       if (!response.ok) continue;
 
-      const live = await response.json() as EjnAnnouncement;
+      const live = await response.json() as EjnLot;
       const before = changed;
       await detectAndSaveChanges(tender.id, tender, live);
       if (changed > before) changed++;
@@ -419,11 +449,7 @@ export async function sendDeadlineReminders(): Promise<void> {
   const threeDays = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
 
   const expiringSoon = await db
-    .select({
-      id: tendersTable.id,
-      title: tendersTable.title,
-      deadline: tendersTable.deadline,
-    })
+    .select({ id: tendersTable.id, title: tendersTable.title, deadline: tendersTable.deadline })
     .from(tendersTable)
     .where(and(eq(tendersTable.status, "open"), gte(tendersTable.deadline, now)))
     .limit(50);

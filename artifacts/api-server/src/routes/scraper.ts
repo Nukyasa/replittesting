@@ -1,30 +1,85 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { scraperLogsTable, tendersTable, aiAnalysisTable } from "@workspace/db";
-import { eq, desc, sql } from "drizzle-orm";
+import { scraperLogsTable } from "@workspace/db";
+import { desc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { authMiddleware } from "../middlewares/auth";
 import { nanoid } from "../lib/nanoid";
 import { scraperLimiter } from "../lib/rateLimiters";
 import { logger } from "../lib/logger";
 import { analyzeTender } from "../services/aiAnalyzer";
-import { EventEmitter } from "events";
 import { runEjnScraper } from "../services/ejnScraper";
+import { scraperEvents } from "../lib/scraperEvents";
+import jwt from "jsonwebtoken";
+
+export { scraperEvents };
 
 export const scraperRouter = Router();
-scraperRouter.use(authMiddleware);
 
-export const scraperEvents = new EventEmitter();
-scraperEvents.setMaxListeners(100);
+const isDev = process.env.NODE_ENV === "development";
+const JWT_SECRET = process.env.JWT_SECRET ?? (isDev ? "asa_tender_jwt_secret_2026" : null);
 
 export let isRunning = false;
 
+scraperRouter.get("/live-feed", (req, res) => {
+  const tokenParam = req.query.token as string | undefined;
+  if (!tokenParam) {
+    res.status(401).end();
+    return;
+  }
+  try {
+    jwt.verify(tokenParam, JWT_SECRET!);
+  } catch {
+    res.status(401).end();
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+
+  const sendEvent = (event: string, data: unknown) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendEvent("connected", { ok: true });
+
+  const heartbeat = setInterval(() => {
+    res.write("event: heartbeat\ndata: {}\n\n");
+  }, 30000);
+
+  const onNewTender = (data: { tender: unknown; isInsurance: boolean }) => {
+    if (data.isInsurance) {
+      sendEvent("new_insurance_tender", data.tender);
+    }
+  };
+
+  const onProgress = (data: unknown) => {
+    sendEvent("scraper_progress", data);
+  };
+
+  scraperEvents.on("new_tender", onNewTender);
+  scraperEvents.on("progress", onProgress);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    scraperEvents.off("new_tender", onNewTender);
+    scraperEvents.off("progress", onProgress);
+  });
+});
+
+scraperRouter.use(authMiddleware);
+
 const CRON_SCHEDULES = {
-  ejn: "0 */2 * * *",
+  ejn: "*/30 * * * *",
   reference: "0 */4 * * *",
   un: "0 6 * * *",
 };
 
-async function runRealScraper(source: string, logId: string, triggeredBy = "manual"): Promise<void> {
+async function runRealScraper(source: string, logId: string, _triggeredBy = "manual"): Promise<void> {
   if (isRunning) {
     logger.info("Scraper already running, skipping");
     return;
@@ -41,9 +96,9 @@ async function runRealScraper(source: string, logId: string, triggeredBy = "manu
     let newCount = 0;
 
     if (source === "ejn" || source === "all") {
-      scraperEvents.emit("progress", { source, status: "running", message: "Preuzimam tender obavještenja s open.ejn.gov.ba..." });
+      scraperEvents.emit("progress", { source, status: "running", message: "Preuzimam insurance tendere s open.ejn.gov.ba..." });
       newCount = await runEjnScraper(logId);
-      scraperEvents.emit("progress", { source, status: "running", message: `Pronađeno ${newCount} novih EJN tendera` });
+      scraperEvents.emit("progress", { source, status: "running", message: `Pronađeno ${newCount} novih insurance tendera`, tendersNew: newCount });
     }
 
     if (source === "reference" || source === "all") {
@@ -174,3 +229,6 @@ scraperRouter.get("/stream", (req, res) => {
     scraperEvents.off("progress", handler);
   });
 });
+
+void analyzeTender;
+void CRON_SCHEDULES;

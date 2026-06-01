@@ -1,0 +1,804 @@
+ASA Tender Intelligence — MVP Promptovi za Replit Agent
+Projekt: ejn.almir.zeljkovic | Stack: Express + React + Drizzle ORM + PostgreSQL
+API: https://open.ejn.gov.ba (OData REST, bez auth)
+Cilj: Sve radi, live data, PDF preview generacija
+
+PROMPT 1 — EJN Live Data + Backend Proxy (Osnova svega)
+Zadatak: Popravi EJN API proxy i osiguraj da CIJELA aplikacija vuče live podatke.
+
+Kontekst projekta:
+- Backend: Express/TypeScript u artifacts/api-server/
+- Frontend: React/Vite u artifacts/tender-app/
+- EJN scraper postoji u src/services/ejnScraper.ts ali koristi stare podatke iz DB-a
+
+Šta treba uraditi:
+
+1. U artifacts/api-server/src/routes/ejn.ts proxy ruta već postoji (GET /*path).
+   Provjeri da li radi ispravno i dodaj ove specifične rute ako ne postoje:
+   
+   GET /api/ejn/announcements → proxira https://open.ejn.gov.ba/Announcements
+   GET /api/ejn/announcements/:id → proxira https://open.ejn.gov.ba/Announcements(id)
+   GET /api/ejn/authorities → proxira https://open.ejn.gov.ba/ContractingAuthorities
+   GET /api/ejn/statistics → proxira https://open.ejn.gov.ba/Statistics
+
+2. U artifacts/tender-app/ napravi src/api/ejn.ts:
+
+const BASE = '/api/ejn';
+
+export const ejnApi = {
+  getAnnouncements: async (params: Record<string, string> = {}) => {
+    const defaults = { '$format': 'json', '$orderby': 'PublicationDate desc' };
+    const q = new URLSearchParams({ ...defaults, ...params }).toString();
+    const res = await fetch(`${BASE}/Announcements?${q}`);
+    if (!res.ok) throw new Error(`EJN error: ${res.status}`);
+    return res.json();
+  },
+  getAnnouncementById: async (id: number) => {
+    const res = await fetch(`${BASE}/Announcements(${id})?$format=json`);
+    if (!res.ok) throw new Error(`EJN error: ${res.status}`);
+    return res.json();
+  },
+  getAuthorities: async (params = {}) => {
+    const q = new URLSearchParams({ '$format': 'json', ...params }).toString();
+    const res = await fetch(`${BASE}/ContractingAuthorities?${q}`);
+    return res.json();
+  },
+  getStats: async () => {
+    const res = await fetch(`${BASE}/Statistics?$format=json`);
+    return res.json();
+  }
+};
+
+3. Testiraj da fetch radi: otvori browser console i pozovi
+   fetch('/api/ejn/Announcements?$top=3&$format=json').then(r=>r.json()).then(console.log)
+   
+   Ako dobije 200 i array podataka — proxy radi.
+
+4. CORS: Ako direktni browser pozivi na open.ejn.gov.ba ne rade, sve mora ići kroz /api/ejn proxy. 
+   NIKAD ne pozivati open.ejn.gov.ba direktno iz React komponenti.
+
+Provjeri da postoji .env varijabla DATABASE_URL i da server starta bez grešaka.
+
+PROMPT 2 — Dashboard sa Live Statistikama
+Zadatak: Napravi funkcionalan Dashboard koji prikazuje LIVE podatke sa EJN API-a.
+
+Fajl: artifacts/tender-app/src/pages/Dashboard.tsx (ili .jsx ako TypeScript ne radi)
+
+Komponenta treba:
+
+1. KPI KARTICE (gornji red, 4 kartice):
+   - Aktivni tenderi: fetch('/api/ejn/Announcements?$filter=StatusId eq 1&$count=true&$top=0&$format=json') → @odata.count
+   - Novi danas: filter PublicationDate eq today
+   - Ukupna vrijednost (BAM): suma EstimatedValue za aktivne tendere (top 100)
+   - Broj ugovornih organa: fetch('/api/ejn/ContractingAuthorities?$count=true&$top=0&$format=json')
+
+2. GRAFIKON — Tenderi po tipu nabavke (Pie chart koristeći recharts):
+   Povuci top 50 tendera, grupiraj po ProcurementType, prikaži pie chart
+   Boje: plava (#1B3A6B), zlatna (#E8A020), zelena, narandžasta, siva
+
+3. LISTA — 5 najnovijih tendera:
+   fetch('/api/ejn/Announcements?$top=5&$orderby=PublicationDate desc&$format=json')
+   Svaki prikazuje: Naziv (skraćen na 60 char), Ugovorni organ, Datum, Vrijednost BAM, Status badge
+
+4. LOADING STANJE: Skeleton loading (sivkaste pulsujuće kutije) dok se podaci učitavaju.
+   NE koristiti spinner.
+
+5. ERROR STANJE: Ako API nije dostupan, prikaži karticu s porukom:
+   "EJN API nije dostupan — pokušaj ponovo" s Retry dugmetom.
+
+Dizajn:
+- Primarna boja: #1B3A6B (tamno plava)
+- Akcentna: #E8A020 (zlatna)  
+- Pozadina: #F5F7FA
+- Font: IBM Plex Sans ili system-ui
+- Kartice sa bijelom pozadinom, shadow-sm, rounded-lg
+
+Koristiti React hooks (useState, useEffect) ili @tanstack/react-query ako je instaliran.
+Import komponente u router (App.tsx ili router fajl) na putanji "/dashboard" ili "/".
+
+PROMPT 3 — Lista i Pretraga Tendera
+Zadatak: Implementiraj potpuno funkcionalnu listu tendera sa pretragom i filterima.
+
+Fajl: artifacts/tender-app/src/pages/TenderList.tsx
+
+FILTERI (lijeva bočna traka ili top panel):
+```typescript
+interface Filters {
+  search: string;       // contains(Subject,'...')
+  status: '' | '1' | '2' | '3';  // StatusId eq X
+  dateFrom: string;     // PublicationDate ge YYYY-MM-DDT00:00:00Z
+  dateTo: string;       // PublicationDate le YYYY-MM-DDT23:59:59Z
+  minValue: string;     // EstimatedValue ge X
+  maxValue: string;     // EstimatedValue le X
+  procurementType: string;
+}
+```
+
+OData filter builder:
+```typescript
+const buildFilter = (f: Filters): string => {
+  const parts: string[] = [];
+  if (f.search) parts.push(`contains(tolower(Subject),tolower('${f.search}'))`);
+  if (f.status) parts.push(`StatusId eq ${f.status}`);
+  if (f.dateFrom) parts.push(`PublicationDate ge ${f.dateFrom}T00:00:00Z`);
+  if (f.dateTo) parts.push(`PublicationDate le ${f.dateTo}T23:59:59Z`);
+  if (f.minValue) parts.push(`EstimatedValue ge ${f.minValue}`);
+  if (f.maxValue) parts.push(`EstimatedValue le ${f.maxValue}`);
+  return parts.join(' and ');
+};
+```
+
+API poziv:
+```typescript
+const params: Record<string, string> = {
+  '$top': pageSize.toString(),
+  '$skip': ((page - 1) * pageSize).toString(),
+  '$count': 'true',
+  '$orderby': sortBy,
+};
+const filter = buildFilter(filters);
+if (filter) params['$filter'] = filter;
+```
+
+KARTICA TENDERA prikazuje:
+- Naziv tendera (bold, 2 linije max)
+- Ugovorni organ (italic, sivo)
+- Datum objave | Rok za ponude (crveno ako < 7 dana do deadline)
+- Vrijednost: "123.456,00 BAM" (koristiti Intl.NumberFormat('bs-BA'))
+- Status badge: zeleno=Aktivan, crveno=Zatvoren, sivo=Poništen
+- Dugme "Detalji" → navigate('/tenders/${id}')
+- Dugme "EJN Portal" → open('https://next.ejn.gov.ba/bs-latn-ba/procurements/announcement/${Id}')
+- Dugme "Watchlist ★" → dodaje u localStorage watchlist
+
+PAGINACIJA:
+- Prikaži: "Prikazano 1-20 od 1,234 tendera"
+- Dugmad: << < 1 2 3 ... > >>
+- Select: 20 / 50 / 100 po stranici
+
+SORTIRANJE: dropdown — Najnoviji | Najstariji | Vrijednost ↑ | Vrijednost ↓ | Naziv A-Z
+
+Debounce pretragu 500ms da ne šalje request na svaki keystroke.
+Ruta: "/tenders"
+
+PROMPT 4 — Detalji Tendera + PDF Preview
+Zadatak: Stranica detalja tendera sa SVIM informacijama i PDF preview generacijom.
+
+Fajl: artifacts/tender-app/src/pages/TenderDetail.tsx
+Ruta: /tenders/:id
+
+1. FETCH PODATAKA:
+```typescript
+const { id } = useParams();
+const [tender, setTender] = useState(null);
+
+useEffect(() => {
+  fetch(`/api/ejn/Announcements(${id})?$format=json`)
+    .then(r => r.json())
+    .then(setTender);
+  
+  // Dokumenti
+  fetch(`/api/ejn/AnnouncementDocuments?$filter=AnnouncementId eq ${id}&$format=json`)
+    .then(r => r.json())
+    .then(d => setDocuments(d.value || []));
+}, [id]);
+```
+
+2. PRIKAZ DETALJA — sve sekcije:
+   a) Header: Naziv, Status badge, EJN link dugme
+   b) Informacije: grid 2x2 — Ugovorni organ | Datum objave | Rok ponude | Procij. vrijednost
+   c) Tehnički detalji: CPV kod, Tip nabavke, E-aukcija (da/ne), Kriterij dodjele
+   d) Garancije: iznos, tip (ako postoji)
+   e) Rokovi: Pitanja do, Ponude do — s countdown timerom u formatu "X dana Y sati"
+   f) Dokumenti: lista s ikonama, naziv fajla + dugme Download
+   g) Slični tenderi: fetch Announcements s istim CpvCode, top 3
+
+3. COUNTDOWN TIMER — live (osvježava svake sekunde):
+```typescript
+const CountdownTimer = ({ deadline }: { deadline: string }) => {
+  const [timeLeft, setTimeLeft] = useState('');
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const diff = new Date(deadline).getTime() - Date.now();
+      if (diff <= 0) { setTimeLeft('Isteklo'); return; }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      setTimeLeft(`${d}d ${h}h ${m}m`);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [deadline]);
+  return <span className={timeLeft === 'Isteklo' ? 'text-red-600' : 'text-orange-600'}>{timeLeft}</span>;
+};
+```
+
+4. PDF PREVIEW GENERACIJA:
+Instaliraj: npm install jspdf html2canvas (ako nije instalirano)
+
+Dugme "Generiši PDF Preview" — klik kreira PDF sa svim detaljima tendera:
+
+```typescript
+import jsPDF from 'jspdf';
+
+const generatePDF = async () => {
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const pageWidth = 210;
+  const margin = 20;
+  let y = 20;
+
+  // Header
+  doc.setFillColor(27, 58, 107); // #1B3A6B
+  doc.rect(0, 0, pageWidth, 35, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.text('ASA Tender Intelligence', margin, 15);
+  doc.setFontSize(10);
+  doc.text('Izvještaj o tenderu', margin, 25);
+  doc.text(new Date().toLocaleDateString('bs-BA'), pageWidth - margin, 25, { align: 'right' });
+
+  y = 50;
+  doc.setTextColor(0, 0, 0);
+  
+  // Naziv
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  const titleLines = doc.splitTextToSize(tender.Subject || 'Bez naziva', pageWidth - 2*margin);
+  doc.text(titleLines, margin, y);
+  y += titleLines.length * 7 + 5;
+
+  // Status
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  const statusColor = tender.StatusId === 1 ? [34, 197, 94] : [239, 68, 68];
+  doc.setFillColor(...statusColor);
+  doc.roundedRect(margin, y, 30, 8, 2, 2, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.text(tender.StatusName || 'Aktivan', margin + 3, y + 5.5);
+  y += 15;
+
+  // Detalji grid
+  doc.setTextColor(0, 0, 0);
+  const fields = [
+    ['Ugovorni organ:', tender.ContractingAuthorityName || '-'],
+    ['Datum objave:', tender.PublicationDate ? new Date(tender.PublicationDate).toLocaleDateString('bs-BA') : '-'],
+    ['Rok za ponude:', tender.DeadlineDate ? new Date(tender.DeadlineDate).toLocaleDateString('bs-BA') : '-'],
+    ['Procijenjena vrijednost:', tender.EstimatedValue ? `${new Intl.NumberFormat('bs-BA').format(tender.EstimatedValue)} ${tender.CurrencyCode || 'BAM'}` : '-'],
+    ['CPV kod:', tender.CpvCode || '-'],
+    ['Tip nabavke:', tender.ProcurementType || '-'],
+    ['E-aukcija:', tender.HasEAuction ? 'Da' : 'Ne'],
+    ['Kriterij dodjele:', tender.AwardCriteria || '-'],
+  ];
+
+  fields.forEach(([label, value]) => {
+    doc.setFont('helvetica', 'bold');
+    doc.text(label, margin, y);
+    doc.setFont('helvetica', 'normal');
+    const valueLines = doc.splitTextToSize(String(value), pageWidth - margin - 75);
+    doc.text(valueLines, margin + 75, y);
+    y += Math.max(valueLines.length * 5, 7) + 2;
+    if (y > 270) { doc.addPage(); y = 20; }
+  });
+
+  // Footer
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    doc.text(`Generirano: ${new Date().toLocaleString('bs-BA')} | EJN ID: ${tender.Id}`, margin, 290);
+    doc.text(`Stranica ${i}/${totalPages}`, pageWidth - margin, 290, { align: 'right' });
+    doc.line(margin, 285, pageWidth - margin, 285);
+  }
+
+  doc.save(`tender-${tender.Id}-${(tender.Subject||'').slice(0,30).replace(/\s+/g,'-')}.pdf`);
+};
+```
+
+Dugme: <button onClick={generatePDF}>📄 Generiši PDF</button>
+Dugme: <button onClick={() => window.open(`https://next.ejn.gov.ba/bs-latn-ba/procurements/announcement/${id}`)}>🔗 Otvori na EJN</button>
+
+5. Dodaj link "← Nazad na listu" i breadcrumb navigaciju.
+
+PROMPT 5 — AI Analiza Tendera (Claude API In-App)
+Zadatak: Implementiraj AI analizu tendera koristeći Anthropic API direktno iz frontenda.
+
+Na stranici TenderDetail.tsx (ili zasebna komponenta TenderAIAnalysis.tsx):
+
+1. DUGME "🤖 AI Analiza" — vidljivo na svakom tenderu
+2. Loading state dok AI analizira (spinner + "Analiza u toku...")
+3. Prikaz rezultata u karticama
+
+API poziv:
+```typescript
+const analyzeWithAI = async (tender: EjnAnnouncement) => {
+  setLoading(true);
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: `Ti si ekspertni savjetnik za javne nabavke u BiH, specijalizovan za kompaniju 
+ASA CENTRAL osiguranje d.d. Sarajevo. Analiziraš tendere i vraćaš SAMO validan JSON, 
+bez markdowna ili komentara.`,
+        messages: [{
+          role: 'user',
+          content: `Analiziraj ovaj tender i vrati JSON u formatu:
+{
+  "relevantnoscScore": 75,
+  "relevantnoscObjasnjenje": "kratko objašnjenje",
+  "kljucniZahtjevi": ["zahtjev1", "zahtjev2", "zahtjev3"],
+  "rizici": [{"rizik": "opis", "ozbiljnost": "low|medium|high"}],
+  "preporuka": "UČESTVUJ|RAZMOTRI|PRESKOČI",
+  "razlogPreporuke": "kratko objašnjenje preporuke",
+  "rokPripreme": "X dana",
+  "procjenaVrijednosti": "komentar o vrijednosti"
+}
+
+Tender podaci:
+Naziv: ${tender.Subject}
+Ugovorni organ: ${tender.ContractingAuthorityName}
+Tip nabavke: ${tender.ProcurementType}
+CPV: ${tender.CpvCode} - ${tender.CpvName || ''}
+Procijenjena vrijednost: ${tender.EstimatedValue} ${tender.CurrencyCode}
+Rok za ponude: ${tender.DeadlineDate}
+Kriterij dodjele: ${tender.AwardCriteria || 'nije specificiran'}
+E-aukcija: ${tender.HasEAuction ? 'Da' : 'Ne'}
+Iznos garancije: ${tender.RequiredGuaranteeAmount || 'nije specificiran'}`
+        }]
+      })
+    });
+    const data = await response.json();
+    const text = data.content[0].text;
+    const analysis = JSON.parse(text.replace(/```json|```/g, '').trim());
+    setAnalysis(analysis);
+  } catch (err) {
+    setError('AI analiza nije dostupna. Provjeri API ključ u postavkama.');
+  } finally {
+    setLoading(false);
+  }
+};
+```
+
+PRIKAZ REZULTATA:
+- Score kartica: veliki broj (npr "75/100") u boji (zeleno>70, naranžasto 40-70, crveno<40)
+- Preporuka: velika badge kartica — zelena "UČESTVUJ", naranžasta "RAZMOTRI", crvena "PRESKOČI"
+- Ključni zahtjevi: lista s checkmark ikonama
+- Rizici: lista s colored badges (low=zeleno, medium=naranžasto, high=crveno)
+- Rok pripreme + procjena vrijednosti: info kartice
+
+NAPOMENA o API ključu:
+- Ako je Anthropic API ključ konfigurisan na serveru (ANTHROPIC_API_KEY env var), bolje je napraviti 
+  backend rutu POST /api/ai/analyze-tender da klju ne bude izložen u frontendu:
+
+  // artifacts/api-server/src/routes/tenders.ts - dodaj:
+  router.post('/analyze', authMiddleware, async (req, res) => {
+    const { tenderId, tenderData } = req.body;
+    // Pozovi Anthropic SDK koji je već instaliran
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic();
+    const msg = await client.messages.create({...});
+    res.json({ analysis: JSON.parse(msg.content[0].text) });
+  });
+
+PROMPT 6 — Watchlist + Status Tracking
+Zadatak: Implementiraj Watchlist stranicu koja prati statusove praćenih tendera.
+
+Fajl: artifacts/tender-app/src/pages/Watchlist.tsx
+Ruta: /watchlist
+
+1. STORAGE (koristiti localStorage):
+```typescript
+const WATCHLIST_KEY = 'asa_tender_watchlist_v2';
+
+interface WatchedTender {
+  Id: number;
+  Subject: string;
+  ContractingAuthorityName: string;
+  DeadlineDate: string;
+  EstimatedValue: number;
+  CurrencyCode: string;
+  StatusId: number;
+  StatusName: string;
+  addedAt: string;
+  lastChecked?: string;
+  hasUpdate?: boolean;
+  updateType?: 'status_changed' | 'deadline_changed' | 'value_changed';
+}
+
+export const watchlistStorage = {
+  getAll: (): WatchedTender[] => JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]'),
+  add: (tender: EjnAnnouncement) => {
+    const list = watchlistStorage.getAll();
+    if (!list.find(t => t.Id === tender.Id)) {
+      list.push({ ...tender, addedAt: new Date().toISOString() });
+      localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+    }
+  },
+  remove: (id: number) => {
+    const list = watchlistStorage.getAll().filter(t => t.Id !== id);
+    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+  },
+  update: (id: number, changes: Partial<WatchedTender>) => {
+    const list = watchlistStorage.getAll().map(t => t.Id === id ? {...t, ...changes} : t);
+    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+  },
+  isWatched: (id: number): boolean => watchlistStorage.getAll().some(t => t.Id === id)
+};
+```
+
+2. PROVJERA AŽURIRANJA:
+```typescript
+const checkUpdates = async () => {
+  setChecking(true);
+  const list = watchlistStorage.getAll();
+  const results = await Promise.allSettled(
+    list.map(async (saved) => {
+      const res = await fetch(`/api/ejn/Announcements(${saved.Id})?$format=json`);
+      const current = await res.json();
+      const changes: string[] = [];
+      if (current.StatusId !== saved.StatusId) changes.push('Status promijenjen');
+      if (current.DeadlineDate !== saved.DeadlineDate) changes.push('Rok promijenjen');
+      if (current.EstimatedValue !== saved.EstimatedValue) changes.push('Vrijednost promijenjena');
+      if (changes.length > 0) {
+        watchlistStorage.update(saved.Id, { 
+          ...current, 
+          hasUpdate: true, 
+          updateType: 'status_changed',
+          lastChecked: new Date().toISOString()
+        });
+      }
+      return { id: saved.Id, changes };
+    })
+  );
+  setTenders(watchlistStorage.getAll());
+  setChecking(false);
+  const total = results.filter(r => r.status === 'fulfilled' && r.value.changes.length > 0).length;
+  if (total > 0) toast(`${total} tender(a) ima promjene!`);
+};
+```
+
+3. PRIKAZ WATCHLISTE:
+- Kartica svakog tendera s countdown timerom
+- Badge "PROMJENA" ako ima ažuriranje (naranžasta, blinkajuća)
+- Datum kad je dodan u watchlistu
+- Dugme "Ukloni" (crvena X ikona)
+- Dugme "Generiši PDF" za svaki tender
+- Header dugme "🔄 Provjeri ažuriranja" (provjerava sve odjednom)
+- Empty state: "Nemaš praćenih tendera. Dodaj ih klikom na ★ na kartici tendera."
+
+4. U TenderList i TenderDetail — dugme za watchlist:
+```typescript
+const isWatched = watchlistStorage.isWatched(Number(id));
+<button onClick={() => isWatched ? watchlistStorage.remove(id) : watchlistStorage.add(tender)}>
+  {isWatched ? '★ Praćen' : '☆ Prati'}
+</button>
+```
+
+PROMPT 7 — Analitika i Grafikoni (Analytics Page)
+Zadatak: Napravi Analytics stranicu s interaktivnim grafikonima koristeći recharts.
+
+Fajl: artifacts/tender-app/src/pages/Analytics.tsx
+Ruta: /analytics
+
+FETCH PODATAKA — 4 API poziva paralelno:
+```typescript
+const [topTenders, setTopTenders] = useState([]);
+const [byStatus, setByStatus] = useState([]);
+const [byType, setByType] = useState([]);
+const [recent, setRecent] = useState([]);
+
+useEffect(() => {
+  // Top 100 po vrijednosti
+  fetch('/api/ejn/Announcements?$top=100&$orderby=EstimatedValue desc&$filter=EstimatedValue gt 0&$format=json')
+    .then(r => r.json()).then(d => setTopTenders(d.value || []));
+  
+  // Aktivni tenderi za status distribution
+  fetch('/api/ejn/Announcements?$top=200&$format=json')
+    .then(r => r.json()).then(d => {
+      const data = d.value || [];
+      // Grupiraj po ProcurementType
+      const byType: Record<string,number> = {};
+      data.forEach(t => {
+        const type = t.ProcurementType || 'Ostalo';
+        byType[type] = (byType[type] || 0) + 1;
+      });
+      setByType(Object.entries(byType).map(([name, value]) => ({ name, value })));
+    });
+  
+  // Posljednjih 90 dana — trend
+  const ninetyDaysAgo = new Date(Date.now() - 90*24*60*60*1000).toISOString().split('T')[0];
+  fetch(`/api/ejn/Announcements?$filter=PublicationDate ge ${ninetyDaysAgo}T00:00:00Z&$top=500&$orderby=PublicationDate asc&$format=json`)
+    .then(r => r.json()).then(d => setRecent(d.value || []));
+}, []);
+```
+
+GRAFIKONI (koristiti recharts — import { PieChart, BarChart, LineChart, ... } from 'recharts'):
+
+1. PIE CHART — Tenderi po tipu nabavke:
+   - Robe / Usluge / Radovi / Ostalo
+   - Boje: #1B3A6B, #E8A020, #22c55e, #94a3b8
+
+2. BAR CHART — Top 10 ugovornih organa (po broju tendera):
+   Grupiraj topTenders po ContractingAuthorityName, sortiraj, prikaži top 10
+   Horizontalni bar chart, tooltip s ukupnom vrijednošću
+
+3. LINE CHART — Trend objava (po danima, zadnjih 90 dana):
+   Grupiraj recent po datumu (YYYY-MM-DD), count po danu
+   X-osa: datum, Y-osa: broj tendera
+   Tooltip: datum + broj
+
+4. KPI CARDS (top 4):
+   - Prosječna vrijednost: suma/count od topTenders
+   - Medijalna vrijednost tendera
+   - % aktivnih tendera
+   - Tenderi s e-aukcijom: count HasEAuction eq true
+
+5. TABELA — Top 20 najvrjednijih tendera:
+   Kolone: Rang | Naziv | Ugovorni organ | Vrijednost BAM | Tip | Status
+   Klikabilni redovi → navigate('/tenders/${id}')
+
+6. AI INSIGHTS dugme — šalje agregirane podatke Claude API-u:
+```typescript
+const getAIInsights = async () => {
+  const summary = {
+    totalTenders: topTenders.length,
+    avgValue: topTenders.reduce((s,t) => s + (t.EstimatedValue||0), 0) / topTenders.length,
+    byType: byType,
+    topAuthority: topTenders[0]?.ContractingAuthorityName,
+  };
+  // Pozovi /api/ai/insights ili direktno Anthropic API
+};
+```
+Prikaži AI odgovor u modal ili expandable sekciji.
+
+Svi grafikoni trebaju biti responsive (width="100%").
+
+PROMPT 8 — Export u PDF (Batch za više tendera)
+Zadatak: Dodaj batch PDF export funkcionalnost — mogućnost exporta više tendera odjednom.
+
+INSTALACIJA (ako nije):
+cd artifacts/tender-app && npm install jspdf
+
+Napravi util fajl: artifacts/tender-app/src/utils/pdfExport.ts
+
+```typescript
+import jsPDF from 'jspdf';
+
+export interface TenderForExport {
+  Id: number;
+  Subject?: string;
+  ContractingAuthorityName?: string;
+  PublicationDate?: string;
+  DeadlineDate?: string;
+  EstimatedValue?: number;
+  CurrencyCode?: string;
+  StatusName?: string;
+  ProcurementType?: string;
+  CpvCode?: string;
+  CpvName?: string;
+  HasEAuction?: boolean;
+  AwardCriteria?: string;
+}
+
+const formatBAM = (value?: number, currency?: string): string => {
+  if (!value) return 'N/A';
+  return `${new Intl.NumberFormat('de-DE').format(value)} ${currency || 'BAM'}`;
+};
+
+const formatDate = (dateStr?: string): string => {
+  if (!dateStr) return 'N/A';
+  return new Date(dateStr).toLocaleDateString('bs-BA');
+};
+
+// JEDAN TENDER - detaljan PDF
+export const exportSingleTenderPDF = (tender: TenderForExport): void => {
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const W = 210, M = 20;
+  let y = 0;
+
+  // Header plavi banner
+  doc.setFillColor(27, 58, 107);
+  doc.rect(0, 0, W, 40, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18); doc.setFont('helvetica', 'bold');
+  doc.text('ASA Tender Intelligence', M, 16);
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+  doc.text('Detalji tendera', M, 26);
+  doc.text(new Date().toLocaleDateString('bs-BA'), W-M, 26, { align: 'right' });
+  
+  // Zlatna linija
+  doc.setFillColor(232, 160, 32);
+  doc.rect(0, 40, W, 2, 'F');
+  y = 52;
+
+  // Naziv
+  doc.setTextColor(27, 58, 107);
+  doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+  const titleLines = doc.splitTextToSize(tender.Subject || 'Bez naziva', W - 2*M);
+  doc.text(titleLines, M, y);
+  y += titleLines.length * 7 + 8;
+
+  // Info tabela
+  doc.setFontSize(10);
+  const rows = [
+    ['Ugovorni organ', tender.ContractingAuthorityName || 'N/A'],
+    ['Datum objave', formatDate(tender.PublicationDate)],
+    ['Rok za ponude', formatDate(tender.DeadlineDate)],
+    ['Procij. vrijednost', formatBAM(tender.EstimatedValue, tender.CurrencyCode)],
+    ['Tip nabavke', tender.ProcurementType || 'N/A'],
+    ['CPV kod', `${tender.CpvCode || ''} ${tender.CpvName || ''}`],
+    ['Kriterij dodjele', tender.AwardCriteria || 'N/A'],
+    ['E-aukcija', tender.HasEAuction ? 'Da' : 'Ne'],
+    ['Status', tender.StatusName || 'N/A'],
+    ['EJN ID', String(tender.Id)],
+  ];
+
+  rows.forEach(([label, value], i) => {
+    const bg = i % 2 === 0 ? [245, 247, 250] : [255, 255, 255];
+    doc.setFillColor(...bg as [number,number,number]);
+    doc.rect(M, y-4, W-2*M, 9, 'F');
+    doc.setTextColor(100);
+    doc.setFont('helvetica', 'bold');
+    doc.text(label + ':', M+2, y+2);
+    doc.setTextColor(0);
+    doc.setFont('helvetica', 'normal');
+    const valLines = doc.splitTextToSize(String(value), W - M - 80);
+    doc.text(valLines, M+70, y+2);
+    y += Math.max(valLines.length * 5, 9) + 1;
+  });
+
+  // EJN Link
+  y += 5;
+  doc.setTextColor(27, 58, 107);
+  doc.setFontSize(9);
+  doc.text('Link na EJN portal:', M, y);
+  const link = `https://next.ejn.gov.ba/bs-latn-ba/procurements/announcement/${tender.Id}`;
+  doc.textWithLink(link, M, y+6, { url: link });
+
+  // Footer
+  doc.setFontSize(8); doc.setTextColor(150);
+  doc.line(M, 285, W-M, 285);
+  doc.text(`Generirano: ${new Date().toLocaleString('bs-BA')} | ASA Tender Intelligence`, M, 290);
+
+  doc.save(`tender-${tender.Id}.pdf`);
+};
+
+// BATCH EXPORT — više tendera u jedan PDF
+export const exportBatchTendersPDF = (tenders: TenderForExport[], title = 'Izvještaj o tenderima'): void => {
+  const doc = new jsPDF('l', 'mm', 'a4'); // landscape za tabelu
+  const W = 297, M = 15;
+  
+  // Header
+  doc.setFillColor(27, 58, 107);
+  doc.rect(0, 0, W, 30, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16); doc.setFont('helvetica', 'bold');
+  doc.text('ASA Tender Intelligence', M, 12);
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+  doc.text(title, M, 22);
+  doc.text(`${tenders.length} tendera | ${new Date().toLocaleDateString('bs-BA')}`, W-M, 22, {align:'right'});
+  
+  // Tabela header
+  let y = 40;
+  const cols = [10, 90, 55, 28, 30, 35, 25]; // widths
+  const headers = ['ID', 'Naziv', 'Ugovorni organ', 'Datum', 'Rok', 'Vrijednost', 'Status'];
+  
+  doc.setFillColor(232, 160, 32);
+  doc.rect(M, y, W-2*M, 8, 'F');
+  doc.setTextColor(27, 58, 107);
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+  let x = M + 2;
+  headers.forEach((h, i) => { doc.text(h, x, y+5); x += cols[i]; });
+  y += 10;
+
+  // Redovi
+  tenders.forEach((t, idx) => {
+    if (y > 185) { doc.addPage(); y = 20; }
+    const bg = idx % 2 === 0 ? [245, 247, 250] : [255, 255, 255];
+    doc.setFillColor(...bg as [number,number,number]);
+    doc.rect(M, y, W-2*M, 7, 'F');
+    doc.setTextColor(0); doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+    const cells = [
+      String(t.Id),
+      (t.Subject || '').slice(0, 45),
+      (t.ContractingAuthorityName || '').slice(0, 30),
+      formatDate(t.PublicationDate),
+      formatDate(t.DeadlineDate),
+      formatBAM(t.EstimatedValue, t.CurrencyCode),
+      t.StatusName || ''
+    ];
+    x = M + 2;
+    cells.forEach((c, i) => { doc.text(c, x, y+4.5); x += cols[i]; });
+    y += 8;
+  });
+
+  // Footer
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7); doc.setTextColor(150);
+    doc.text(`Stranica ${i}/${pages}`, W-M, 205, { align: 'right' });
+  }
+
+  doc.save(`asa-tender-izvjestaj-${new Date().toISOString().split('T')[0]}.pdf`);
+};
+```
+
+KORIŠĆENJE:
+- U TenderDetail: import { exportSingleTenderPDF } from '../utils/pdfExport'; → onClick={() => exportSingleTenderPDF(tender)}
+- U TenderList: checkbox selekcija + "Export odabranih (N)" dugme → exportBatchTendersPDF(selectedTenders)
+- U Watchlist: dugme "Export watchliste" → exportBatchTendersPDF(watchedTenders, 'Moj Watchlist')
+
+PROMPT 9 — Settings Stranica (API ključ, Tema, Jezik)
+Zadatak: Napravi Settings stranicu koja čuva preferencije u localStorage.
+
+Fajl: artifacts/tender-app/src/pages/Settings.tsx
+Ruta: /settings
+
+SETTINGS STORAGE:
+```typescript
+const SETTINGS_KEY = 'asa_tender_settings';
+
+interface AppSettings {
+  theme: 'light' | 'dark' | 'system';
+  language: 'bs' | 'en';
+  anthropicApiKey: string;
+  defaultStatus: '' | '1' | '2';
+  defaultPageSize: 20 | 50 | 100;
+  notificationsEnabled: boolean;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'light',
+  language: 'bs',
+  anthropicApiKey: '',
+  defaultStatus: '1',
+  defaultPageSize: 20,
+  notificationsEnabled: true,
+};
+
+export const settingsStorage = {
+  get: (): AppSettings => ({ ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }),
+  set: (s: Partial<AppSettings>) => localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settingsStorage.get(), ...s })),
+  reset: () => localStorage.removeItem(SETTINGS_KEY),
+};
+```
+
+SEKCIJE na stranici:
+
+1. Izgled:
+   - Tema: Radio buttoni (Svijetla / Tamna / Sistemska)
+   - Font veličina: Small / Medium / Large
+
+2. Jezik i region:
+   - Jezik: Bosanski (BS) / English (EN)
+   - Format datuma: dd.MM.yyyy ili MM/dd/yyyy
+
+3. AI Integracija:
+   - Anthropic API ključ: password input (prikaži/sakrij dugme)
+   - Dugme "Test veze" → pozovi API s kratkim testom i prikaži status
+
+4. Podrazumijevani filteri:
+   - Default status filtera: Aktivan / Svi
+   - Broj rezultata po stranici: 20 / 50 / 100
+
+5. Opasna zona:
+   - "Obriši Watchlist" (confirmation dialog)
+   - "Resetuj sve postavke"
+   - "Očisti cache" (localStorage clear)
+
+Dugme "Sačuvaj" → settingsStorage.set(formValues)
+Toast notifikacija "Postavke sačuvane ✓" nakon uspjeha.
+
+REDOSLJED PRIMJENE
+KorakPromptPrioritet1PROMPT 1 — EJN Proxy + API modul🔴 Kritično2PROMPT 2 — Dashboard live data🔴 Kritično3PROMPT 3 — Lista i pretraga🔴 Kritično4PROMPT 4 — Detalji + PDF single🟡 Visoko5PROMPT 6 — Watchlist🟡 Visoko6PROMPT 5 — AI Analiza🟠 Srednje7PROMPT 8 — Batch PDF export🟠 Srednje8PROMPT 7 — Analytics grafikoni🟢 Nisko9PROMPT 9 — Settings🟢 Nisko
+
+PROVJERA DA LI RADI (Quick Test)
+Nakon svakog prompta, testiraj:
+
+curl http://localhost:5000/api/ejn/Announcements?$top=3&$format=json → mora vratiti JSON array
+Otvori browser → Dashboard → vide se KPI kartice sa brojevima (ne 0 ili N/A)
+Otvori /tenders → lista se učitava, pretraga radi
+Klikni na tender → detalji prikazuju sve, PDF dugme radi
+Dodaj tender u watchlist → pojavi se na /watchlist

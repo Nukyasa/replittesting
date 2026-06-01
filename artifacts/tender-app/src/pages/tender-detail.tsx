@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import jsPDF from "jspdf";
 import { useParams, Link } from "wouter";
 import {
   useGetTender, useAnalyzeTender, useChatWithTender,
@@ -309,6 +310,95 @@ export default function TenderDetail() {
     ? `https://next.ejn.gov.ba/bs-latn-ba/procurements/announcement/${t.externalId.replace("EJN-", "")}`
     : null);
 
+  const generatePDF = useCallback(() => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = 210;
+    const margin = 20;
+    let y = 20;
+
+    doc.setFillColor(0, 45, 130);
+    doc.rect(0, 0, pageWidth, 35, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("ASA Tender Intelligence", margin, 15);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text("Izvještaj o tenderu", margin, 25);
+    doc.text(new Date().toLocaleDateString("bs-BA"), pageWidth - margin, 25, { align: "right" });
+
+    y = 48;
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    const titleLines = doc.splitTextToSize(t.title || "Bez naziva", pageWidth - 2 * margin);
+    doc.text(titleLines, margin, y);
+    y += (titleLines as string[]).length * 6 + 6;
+
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    const statusColor: [number, number, number] = t.status === "open" ? [34, 197, 94] : t.status === "closed" ? [239, 68, 68] : [156, 163, 175];
+    doc.setFillColor(...statusColor);
+    doc.roundedRect(margin, y, 32, 7, 1.5, 1.5, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.text(t.statusName || (t.status === "open" ? "Aktivan" : "Zatvoren"), margin + 2, y + 5);
+    y += 14;
+
+    doc.setTextColor(0, 0, 0);
+    const fields: [string, string][] = [
+      ["Ugovorni organ:", t.contractingAuth || "-"],
+      ["Entitet:", t.entity || "-"],
+      ["Datum objave:", t.publicationDate ? new Date(t.publicationDate).toLocaleDateString("bs-BA") : "-"],
+      ["Rok za ponude:", t.deadline ? new Date(t.deadline).toLocaleDateString("bs-BA") : "-"],
+      ["Rok za pitanja:", t.questionsDeadline ? new Date(t.questionsDeadline).toLocaleDateString("bs-BA") : "N/A"],
+      ["Procijenjena vrijednost:", t.estimatedValue ? `${new Intl.NumberFormat("bs-BA").format(t.estimatedValue)} ${t.currency || "KM"}` : "-"],
+      ["CPV kod:", (t.cpvCodes || []).join(", ") || "-"],
+      ["Tip nabavke:", t.tenderType || "-"],
+      ["E-aukcija:", t.hasEAuction ? "Da" : "Ne"],
+      ["Kriterij dodjele:", t.awardCriteria || "-"],
+      ["Garancija:", t.guaranteeAmount ? `${new Intl.NumberFormat("bs-BA").format(t.guaranteeAmount)} ${t.currency || "KM"} (${t.guaranteeType || ""})` : "N/A"],
+      ["EJN ID:", t.externalId || "-"],
+    ];
+
+    doc.setFontSize(9);
+    for (const [label, value] of fields) {
+      doc.setFont("helvetica", "bold");
+      doc.text(label, margin, y);
+      doc.setFont("helvetica", "normal");
+      const valueLines = doc.splitTextToSize(String(value), pageWidth - margin - 72);
+      doc.text(valueLines, margin + 70, y);
+      y += Math.max((valueLines as string[]).length * 5, 6) + 2;
+      if (y > 270) { doc.addPage(); y = 20; }
+    }
+
+    if (t.aiAnalysis?.summary) {
+      y += 4;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("AI Analiza", margin, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      const summaryLines = doc.splitTextToSize(t.aiAnalysis.summary, pageWidth - 2 * margin);
+      doc.text(summaryLines, margin, y);
+      y += (summaryLines as string[]).length * 5 + 4;
+    }
+
+    const totalPages = (doc as unknown as { getNumberOfPages: () => number }).getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.line(margin, 285, pageWidth - margin, 285);
+      doc.text(`Generirano: ${new Date().toLocaleString("bs-BA")} | ASA Tender Intelligence`, margin, 290);
+      doc.text(`Str. ${i}/${totalPages}`, pageWidth - margin, 290, { align: "right" });
+    }
+
+    const safeName = (t.title || "tender").slice(0, 40).replace(/[^a-zA-Z0-9\s]/g, "").replace(/\s+/g, "-");
+    doc.save(`${t.externalId || "tender"}-${safeName}.pdf`);
+    toast.success("PDF preuzet");
+  }, [t]);
+
   const analysis = t.aiAnalysis;
   const changes = t.changes || [];
   const notesList = (notes as { id: string; content: string; createdAt: string | null }[] | undefined) || [];
@@ -353,6 +443,9 @@ export default function TenderDetail() {
                 ) : (
                   <><Bookmark className="w-4 h-4 mr-2" /> Prati</>
                 )}
+              </Button>
+              <Button variant="outline" onClick={generatePDF}>
+                <FileDown className="w-4 h-4 mr-2" /> PDF
               </Button>
               {ejnLink && (
                 <a href={ejnLink} target="_blank" rel="noreferrer">

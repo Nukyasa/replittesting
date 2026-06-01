@@ -1,1 +1,2 @@
 - [EJN v2 schema + scraper](ejn-v2.md) — Announcements endpoint has richer fields than AnnouncementProcedureCalls; tenderChangesTable tracks field-level diffs with hourly cron sync.
+- [EJN OData URL building](ejn-api-url-building.md) — never encodeURIComponent filter values; use qs() for spaces/%27 only; Lots endpoint; 30s timeout

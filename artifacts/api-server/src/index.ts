@@ -7,7 +7,7 @@ import { scraperLogsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { nanoid } from "./lib/nanoid";
 import { runEjnScraper, syncActiveEjnTenders, sendDeadlineReminders } from "./services/ejnScraper";
-import { scraperEvents } from "./routes/scraper";
+import { scraperEvents } from "./lib/scraperEvents";
 
 const rawPort = process.env["PORT"];
 
@@ -35,13 +35,13 @@ app.listen(port, (err) => {
 
   let cronRunning = false;
 
-  cron.schedule("0 */2 * * *", async () => {
+  cron.schedule("*/30 * * * *", async () => {
     if (cronRunning) {
       logger.info("Cron: EJN scraper already running, skipping");
       return;
     }
     cronRunning = true;
-    logger.info("Cron: Starting scheduled EJN scrape");
+    logger.info("Cron: Starting scheduled EJN insurance scrape");
 
     const [log] = await db
       .insert(scraperLogsTable)
@@ -71,11 +71,11 @@ app.listen(port, (err) => {
       scraperEvents.emit("progress", {
         source: "ejn",
         status: "completed",
-        message: `Cron: ${newCount} novih tendera uvezeno`,
+        message: `Cron: ${newCount} novih insurance tendera uvezeno`,
         tendersNew: newCount,
       });
 
-      logger.info({ newCount }, "Cron: EJN scrape completed");
+      logger.info({ newCount }, "Cron: EJN insurance scrape completed");
     } catch (cronErr) {
       logger.error({ err: cronErr }, "Cron: EJN scrape failed");
       await db
@@ -105,5 +105,5 @@ app.listen(port, (err) => {
     }
   });
 
-  logger.info("Cron schedulers registered: EJN every 2h, sync every 1h, deadlines daily at 8:00");
+  logger.info("Cron schedulers registered: EJN insurance every 30min, sync every 1h, deadlines daily at 8:00");
 });

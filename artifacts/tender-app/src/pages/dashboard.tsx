@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useListTenders, useGetAnalyticsSummary, useGetAnalyticsByCategory, useTriggerScraper } from "@workspace/api-client-react";
+import { LiveFeed } from "@/components/LiveFeed";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoney, formatDate, getScoreBadgeProps } from "@/lib/format";
@@ -200,15 +201,18 @@ export default function Dashboard() {
             <CardContent className="p-5 space-y-3">
               <h3 className="font-semibold text-primary text-sm">EJN Integracija</h3>
               <p className="text-xs text-gray-600 leading-relaxed">
-                Sistem je integrisan s <strong>open.ejn.gov.ba</strong> OData API-jem. Tenderi se automatski uvezuju i kategoriziraju.
+                Sistem je integrisan s <strong>open.ejn.gov.ba</strong> OData API-jem. Filtriraju se isključivo <strong>insurance tenderi</strong> (CPV 665xx + ključne riječi).
               </p>
               <div className="text-xs text-gray-500 space-y-1">
                 <div className="flex justify-between"><span>Izvor:</span><span className="font-medium">EJN BiH</span></div>
-                <div className="flex justify-between"><span>Entitet:</span><span className="font-medium">AnnouncementProcedureCalls</span></div>
+                <div className="flex justify-between"><span>Endpoint:</span><span className="font-medium">Announcements</span></div>
+                <div className="flex justify-between"><span>Sinkronizacija:</span><span className="font-medium">Svakih 30 min</span></div>
                 <div className="flex justify-between"><span>Format:</span><span className="font-medium">OData / JSON</span></div>
               </div>
             </CardContent>
           </Card>
+
+          <LiveFeed />
         </div>
       </div>
     </div>

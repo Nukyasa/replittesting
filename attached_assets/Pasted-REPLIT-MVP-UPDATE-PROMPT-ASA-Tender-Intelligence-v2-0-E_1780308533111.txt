@@ -1,0 +1,486 @@
+REPLIT MVP UPDATE PROMPT — ASA Tender Intelligence v2.0
+EJN Realtime Integration + Kompletna analiza tendera
+
+KONTEKST
+Ovo je UPDATE postojeće aplikacije "ASA Tender Intelligence" (Node.js + Express + React + Vite + TailwindCSS + PostgreSQL/Neon + Prisma + Claude API).
+Branding ostaje isti:
+
+Naziv: ASA Tender Intelligence | ASA CENTRAL Osiguranje d.d. Sarajevo
+Logo: https://asacentral.ba/logo.webp
+Brand boja: --asa-blue: #002d82
+
+
+DIO 1 — EJN REALTIME INTEGRACIJA
+1.1 EJN Open Data API (PRIMARNI IZVOR)
+Koristi OData REST API sa https://open.ejn.gov.ba — bez auth, direktni fetch.
+javascript// server/services/ejnService.js
+
+const EJN_BASE = 'https://open.ejn.gov.ba';
+
+export async function fetchTenders({ top = 20, skip = 0, search = '', statusId = null } = {}) {
+  const params = new URLSearchParams({
+    '$top': top,
+    '$skip': skip,
+    '$orderby': 'PublicationDate desc',
+    '$format': 'json',
+    '$count': 'true'
+  });
+
+  const filters = [];
+  if (search) filters.push(`contains(Subject,'${search}')`);
+  if (statusId) filters.push(`StatusId eq ${statusId}`);
+  if (filters.length) params.set('$filter', filters.join(' and '));
+
+  const res = await fetch(`${EJN_BASE}/Announcements?${params}`);
+  if (!res.ok) throw new Error('EJN API error: ' + res.status);
+  const data = await res.json();
+  return { tenders: data.value, total: data['@odata.count'] };
+}
+
+export async function fetchTenderById(id) {
+  const res = await fetch(`${EJN_BASE}/Announcements(${id})?$format=json&$expand=Documents,Lots`);
+  if (!res.ok) throw new Error('EJN tender not found');
+  return res.json();
+}
+1.2 EJN Polja koja treba mapirati
+Svaki Announcement objekat ima:
+
+Id — jedinstven ID
+Subject — naziv tendera
+PublicationDate — datum objave
+DeadlineDate — rok za prijem ponuda
+QuestionsDeadline — rok za postavljanje pitanja
+EstimatedValue — procijenjena vrijednost (broj)
+CurrencyCode — valuta (BAM, EUR)
+ContractingAuthorityName — naziv ugovornog organa
+ProcurementType / ProcurementTypeName — vrsta postupka
+StatusId / StatusName — status (1=Aktivan, 2=Zatvoren, 3=Poništen)
+CpvCode / CpvName — CPV kategorija
+HasEAuction — boolean, ima li e-aukciju
+AnnouncementUrl — link na EJN portal
+AwardCriteria — kriterij dodjele (najniža cijena / ekonomski najpovoljnija)
+AwardCriteriaDetails — detalji kriterija (težine, ponderacija)
+TenderPreparationCost — troškovi pripreme ponude
+RequiredGuaranteeAmount — iznos garancije
+RequiredGuaranteeType — vrsta garancije
+Documents (expand) — lista dokumenata (ANNEX I, tenderske dokumentacije)
+Lots (expand) — lotovi / dijelovi tendera
+
+1.3 Prisma Schema — dodati/proširiti
+prismamodel Tender {
+  id                      String   @id @default(cuid())
+  ejnId                   Int      @unique
+  subject                 String
+  publicationDate         DateTime?
+  deadlineDate            DateTime?  // rok za prijem ponuda
+  questionsDeadline       DateTime?  // rok za pitanja
+  estimatedValue          Float?
+  currencyCode            String?
+  contractingAuthority    String?
+  procurementType         String?
+  statusId                Int?
+  statusName              String?
+  cpvCode                 String?
+  cpvName                 String?
+  hasEAuction             Boolean  @default(false)
+  announcementUrl         String?
+  awardCriteria           String?
+  awardCriteriaDetails    String?  // JSON string
+  tenderPreparationCost   Float?
+  guaranteeAmount         Float?
+  guaranteeType           String?
+  
+  // AI analiza
+  aiSummary               String?
+  aiScore                 Int?
+  aiRecommendation        String?
+  participationConditions String?  // uslovi učešća (AI extracted)
+  requiredDeclarations    String?  // izjave / članovi (AI extracted)
+  
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  
+  documents               TenderDocument[]
+  notifications           TenderNotification[]
+  changes                 TenderChange[]
+}
+
+model TenderDocument {
+  id          String  @id @default(cuid())
+  tenderId    String
+  tender      Tender  @relation(fields: [tenderId], references: [id])
+  name        String
+  type        String  // ANNEX_I, TENDER_DOC, etc.
+  url         String?
+  ejnDocId    Int?
+  createdAt   DateTime @default(now())
+}
+
+model TenderChange {
+  id          String   @id @default(cuid())
+  tenderId    String
+  tender      Tender   @relation(fields: [tenderId], references: [id])
+  field       String
+  oldValue    String?
+  newValue    String?
+  changedAt   DateTime @default(now())
+  notified    Boolean  @default(false)
+}
+
+model TenderNotification {
+  id          String   @id @default(cuid())
+  tenderId    String
+  tender      Tender   @relation(fields: [tenderId], references: [id])
+  userId      String
+  type        String   // DEADLINE_REMINDER, CHANGE_DETECTED, NEW_TENDER
+  message     String
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+DIO 2 — BACKEND API ENDPOINTI
+2.1 Tender routes — server/routes/tenders.js
+javascript// GET /api/tenders — lista s filterima
+router.get('/', async (req, res) => {
+  const { page = 1, limit = 20, search, status, cpv, minValue, maxValue } = req.query;
+  const skip = (page - 1) * limit;
+  
+  // Povuci sa EJN live API
+  const { tenders, total } = await ejnService.fetchTenders({
+    top: limit, skip, search, statusId: status
+  });
+  
+  // Paralelno upsert u lokalnu bazu
+  await syncTendersToDb(tenders);
+  
+  res.json({ tenders, total, page: +page, limit: +limit });
+});
+
+// GET /api/tenders/:id — detalji tendera
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  // Pokušaj iz lokalne baze
+  let tender = await prisma.tender.findUnique({
+    where: { ejnId: parseInt(id) },
+    include: { documents: true, changes: { orderBy: { changedAt: 'desc' }, take: 10 } }
+  });
+  
+  // Ako nema, povuci live
+  if (!tender) {
+    const ejnData = await ejnService.fetchTenderById(id);
+    tender = await upsertTender(ejnData);
+  }
+  
+  res.json(tender);
+});
+
+// POST /api/tenders/:id/analyze — AI analiza
+router.post('/:id/analyze', auth, async (req, res) => {
+  const tender = await ejnService.fetchTenderById(req.params.id);
+  const analysis = await aiService.analyzeTender(tender);
+  
+  await prisma.tender.update({
+    where: { ejnId: parseInt(req.params.id) },
+    data: {
+      aiSummary: analysis.summary,
+      aiScore: analysis.score,
+      aiRecommendation: analysis.recommendation,
+      participationConditions: analysis.conditions,
+      requiredDeclarations: analysis.declarations
+    }
+  });
+  
+  res.json(analysis);
+});
+
+// GET /api/tenders/notifications — notifikacije korisnika
+router.get('/notifications/all', auth, async (req, res) => {
+  const notifications = await prisma.tenderNotification.findMany({
+    where: { userId: req.user.id, read: false },
+    include: { tender: { select: { id: true, subject: true, ejnId: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 50
+  });
+  res.json(notifications);
+});
+2.2 Cron sync — server/jobs/syncTenders.js
+javascriptimport cron from 'node-cron';
+import { fetchTenders, fetchTenderById } from '../services/ejnService.js';
+import { prisma } from '../db.js';
+
+// Svaki sat: provjeri za izmjene na praćenim tenderima
+cron.schedule('0 * * * *', async () => {
+  console.log('[SYNC] Provjera izmjena na tenderima...');
+  
+  const trackedTenders = await prisma.tender.findMany({
+    where: { statusId: 1 }, // samo aktivni
+    select: { ejnId: true, deadlineDate: true, subject: true }
+  });
+  
+  for (const t of trackedTenders) {
+    try {
+      const live = await fetchTenderById(t.ejnId);
+      await detectAndSaveChanges(t, live);
+    } catch (e) {
+      console.error(`[SYNC] Greška za tender ${t.ejnId}:`, e.message);
+    }
+  }
+});
+
+// Svaki dan u 8:00 — check rokovi
+cron.schedule('0 8 * * *', async () => {
+  const soon = new Date();
+  soon.setDate(soon.getDate() + 3);
+  
+  const deadlineSoon = await prisma.tender.findMany({
+    where: {
+      statusId: 1,
+      deadlineDate: { gte: new Date(), lte: soon }
+    }
+  });
+  
+  for (const t of deadlineSoon) {
+    await createDeadlineNotification(t);
+  }
+});
+
+async function detectAndSaveChanges(old, live) {
+  const fields = ['deadlineDate', 'questionsDeadline', 'estimatedValue', 'statusId'];
+  const changes = [];
+  
+  for (const field of fields) {
+    if (String(old[field]) !== String(live[field])) {
+      changes.push({ field, oldValue: String(old[field]), newValue: String(live[field]) });
+    }
+  }
+  
+  if (changes.length > 0) {
+    await prisma.tenderChange.createMany({
+      data: changes.map(c => ({ ...c, tenderId: old.id }))
+    });
+    
+    await prisma.tenderNotification.create({
+      data: {
+        tenderId: old.id,
+        userId: 'all', // ili specifičan user
+        type: 'CHANGE_DETECTED',
+        message: `Izmjene na tenderu: ${old.subject} — ${changes.map(c => c.field).join(', ')}`
+      }
+    });
+  }
+}
+
+DIO 3 — AI ANALIZA TENDERA (Claude API)
+server/services/aiService.js
+javascriptimport Anthropic from '@anthropic-ai/sdk';
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+export async function analyzeTender(tender) {
+  const prompt = `Analiziraj ovaj tender iz BiH portala javnih nabavki i izvuci sve ključne informacije.
+
+TENDER PODACI:
+Naziv: ${tender.Subject}
+Ugovorni organ: ${tender.ContractingAuthorityName}
+Datum objave: ${tender.PublicationDate}
+Rok za prijem ponuda: ${tender.DeadlineDate}
+Rok za pitanja: ${tender.QuestionsDeadline}
+Procijenjena vrijednost: ${tender.EstimatedValue} ${tender.CurrencyCode}
+Kriterij dodjele: ${tender.AwardCriteria}
+Troškovi pripreme: ${tender.TenderPreparationCost || 'Nisu navedeni'}
+Garancija: ${tender.RequiredGuaranteeAmount} ${tender.CurrencyCode} (${tender.RequiredGuaranteeType || ''})
+E-aukcija: ${tender.HasEAuction ? 'DA' : 'NE'}
+Status: ${tender.StatusName}
+
+Dokument URL: ${tender.AnnouncementUrl}
+
+Odgovori ISKLJUČIVO u JSON formatu (bez Markdown):
+{
+  "summary": "Kratki sažetak tendera (2-3 rečenice)",
+  "score": 75,  // 0-100, koliko je tender relevantan za osiguravajuću kuću
+  "recommendation": "PREPORUČENO|NEUTRALNO|NIJE_PREPORUČENO",
+  "reasons": ["razlog 1", "razlog 2"],
+  "conditions": {
+    "financial": "finansijski uslovi učešća",
+    "technical": "tehnički uslovi",
+    "legal": "pravni uslovi / izjave",
+    "experience": "reference / iskustvo"
+  },
+  "declarations": ["Izjava o nekažnjavanju", "Izjava o plaćenim doprinosima", "..."],
+  "awardAnalysis": "Analiza kriterija dodjele i kako se boduje",
+  "guaranteeInfo": "Analiza garancija koje trebaju biti dostavljene",
+  "deadlines": {
+    "submission": "${tender.DeadlineDate}",
+    "questions": "${tender.QuestionsDeadline}",
+    "daysRemaining": 15
+  },
+  "risks": ["Rizik 1", "Rizik 2"],
+  "estimatedPrepTime": "3-5 dana"
+}`;
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 2000,
+    messages: [{ role: 'user', content: prompt }]
+  });
+
+  const text = response.content[0].text.replace(/```json|```/g, '').trim();
+  return JSON.parse(text);
+}
+
+DIO 4 — FRONTEND KOMPONENTE (React)
+4.1 Tender Detail Page — client/src/pages/TenderDetail.jsx
+Ova stranica treba prikazati SVE parametre:
+jsx// Struktura sekcija u Tender Detail:
+
+// 1. HEADER sekcija
+// - Naziv tendera (subject)  
+// - Ugovorni organ
+// - Status badge (Aktivan/Zatvoren/Poništen)
+// - Datum objave
+
+// 2. ROKOVI (Timeline component)
+// - Rok za postavljanje pitanja (questionsDeadline)
+// - Rok za prijem ponuda (deadlineDate)  
+// - Countdown timer za svaki rok
+// - Alert ako je rok u narednih 3 dana
+
+// 3. FINANCIJSKI DETALJI
+// - Procijenjena vrijednost (estimatedValue + currencyCode)
+// - Troškovi pripreme ponude (tenderPreparationCost)
+// - Garancija (guaranteeAmount + guaranteeType)
+// - E-aukcija badge (hasEAuction)
+
+// 4. KRITERIJI ZA DODJELU
+// - awardCriteria (najniža cijena / ekonomski najpovoljnija)
+// - awardCriteriaDetails (tabela s ponderima)
+
+// 5. USLOVI UČEŠĆA (iz AI analize)
+// - Finansijski uslovi
+// - Tehnički uslovi  
+// - Pravni uslovi
+// - Zahtijevano iskustvo/reference
+
+// 6. IZJAVE / ČLANOVI (iz AI analize)
+// - Lista svih izjava koje ponuđač mora dostaviti
+
+// 7. DOKUMENTI (ANNEX I + tenderske dok)
+// - Lista dokumenata s linkovima
+// - Označeno koji je ANNEX I
+
+// 8. AI ANALIZA kartica
+// - Score (0-100) sa progress barom
+// - Preporuka (badge)
+// - Sažetak
+// - Analiza kriterija
+// - Rizici
+// - Procijenjeno vrijeme pripreme
+
+// 9. IZMJENE / HISTORIJA
+// - Lista TenderChange zapisa
+// - Datum i što se promijenilo
+4.2 Notifications Bell — client/src/components/NotificationBell.jsx
+jsx// Badge s brojem nepročitanih notifikacija
+// Dropdown lista:
+// - CHANGE_DETECTED: "Izmjena na tenderu X — rok produžen"
+// - DEADLINE_REMINDER: "Tender Y — rok za predaju za 3 dana!"
+// - NEW_TENDER: "Novi tender u kategoriji Z"
+// Klik → označi kao pročitano
+4.3 Dashboard Stats — client/src/pages/Dashboard.jsx
+jsx// Live statistike iz EJN API:
+// - Ukupno aktivnih tendera (StatusId eq 1)
+// - Ukupna procijenjena vrijednost aktivnih tendera
+// - Tenderi kojima rok ističe u narednih 7 dana
+// - Broj novih tendera danas
+// - Graf: Vrijednost tendera po CPV kategorijama (Recharts)
+// - Graf: Tenderi po statusu (pie chart)
+
+DIO 5 — EJN LOGIN INTEGRACIJA (opcionalno, za scraping)
+Korisničke kredencijale za ejn.gov.ba portal:
+
+URL: https://www.ejn.gov.ba/
+Korisnik: almir.zeljkovic
+Lozinka: Start.2024
+
+Koristi playwright za login i scraping kompletnih tenderskih dokumenata kada Open API ne daje sve detalje:
+javascript// server/scrapers/ejnAuthScraper.js
+import { chromium } from 'playwright';
+
+export async function scrapeFullTenderDetails(tenderId) {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  
+  // Login
+  await page.goto('https://www.ejn.gov.ba/');
+  await page.click('[href*="login"]');
+  await page.fill('input[name="username"]', 'almir.zeljkovic');
+  await page.fill('input[name="password"]', 'Start.2024');
+  await page.click('button[type="submit"]');
+  await page.waitForNavigation();
+  
+  // Preuzmi detalje tendera
+  await page.goto(`https://www.ejn.gov.ba/tender/${tenderId}`);
+  
+  const details = await page.evaluate(() => ({
+    conditions: document.querySelector('.participation-conditions')?.innerText,
+    documents: Array.from(document.querySelectorAll('.document-list a')).map(a => ({
+      name: a.innerText,
+      url: a.href
+    }))
+  }));
+  
+  await browser.close();
+  return details;
+}
+
+DIO 6 — ENV VARIJABLE
+envDATABASE_URL=<neon postgresql url>
+ANTHROPIC_API_KEY=<claude api key>
+JWT_SECRET=<secret>
+NODE_ENV=production
+PORT=5000
+EJN_BASE_URL=https://open.ejn.gov.ba
+
+DIO 7 — CHECKLIST FUNKCIONALNOSTI
+Svaka stavka mora biti funkcionalna:
+
+ 1. Pregled tendera — lista s paginacijom, search, filteri (status, CPV, vrijednost, datum)
+ 2. Rokovi — rok za predaju, rok za pitanja, rok za žalbu (ako postoji), countdown timer
+ 3. Kriteriji za dodjelu — prikaz kriterija i detalja ponderacije
+ 4. Uslovi učešća / Izjave — AI-extracted iz dokumentacije
+ 5. Garancije — iznos, vrsta, rok važenja
+ 6. Obračun uslova i tarifa — procijenjena vrijednost, lot breakdown, CPV kategorije
+ 7. Procijenjena vrijednost — prominentno prikazana, konverzija valuta
+ 8. E-aukcija — jasno označeno DA/NE badge
+ 9. Datum objave — na svim listama i detaljima
+ 10. Rok za prijem ponuda — countdown timer sa bojama (zeleno > 7 dana, narančasto 3-7, crveno < 3)
+ 11. Troškovi pripreme tendera — prikazani u financijskoj sekciji
+ 12. Notifikacije za izmjene — bell ikona, badge, lista izmjena, history
+ 13. Rokovi za pitanja — posebno istaknuto u timeline sekciji
+ 14. ANNEX I / Tenderske dok — lista dokumenata s preuzimanjem
+ 15. Uslovi učešća — strukturirano (finansijski, tehnički, pravni)
+ 16. Izjave / Članovi — lista svih potrebnih izjava
+
+
+DIO 8 — UI/UX ZAHTJEVI
+
+Koristiti postojeći ASA branding (#002d82 navy plava)
+Responsive — mobile i desktop
+Dark/light mode toggle
+Skeleton loaderi za sve fetch operacije
+Toast notifikacije za akcije (sačuvano, greška, analizirano)
+Filtri se pamte u URL query params
+Lazy loading za listu tendera (infinite scroll ili paginacija)
+Tender detail page: sticky sidebar s ključnim rokovima i akcijama
+Print view za tender detalje (CSS @media print)
+
+
+NAPOMENE ZA IMPLEMENTACIJU
+
+EJN Open API je javni — ne treba auth za čitanje, direktni fetch na klijentu ili serveru
+Playwright scraper za dublje detalje je opcionalan (koristi se samo kad API ne daje dovoljno)
+AI analiza se pokreće on-demand (klik na dugme "Analiziraj") da se ne troši API
+Cron sync za izmjene radi svaki sat za aktivne tendere u lokalnoj bazi
+Notifikacije se šalju kroz bazu podataka i prikazuju u UI-u (nije email, nego in-app)
+Sve Bosnian — UI je na bosanskom/srpskom/hrvatskom jeziku

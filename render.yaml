@@ -4,7 +4,7 @@ services:
     env: node
     plan: free
     region: frankfurt
-    buildCommand: pnpm install --frozen-lockfile=false && pnpm run build && pnpm --filter api-server build
+    buildCommand: pnpm install --frozen-lockfile=false && pnpm --filter tender-app build && pnpm --filter api-server build
     startCommand: pnpm --filter api-server start
     healthCheckPath: /api/health
     envVars:

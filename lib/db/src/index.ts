@@ -42,8 +42,26 @@ if (hasDatabaseUrl) {
   console.log("[DATABASE] SPINNING UP IN-MEMORY POSTGRESQL (PGLITE) DATABASE...");
   console.log("=========================================================\n");
 
-  const dbPath = path.join(findWorkspaceRoot(process.cwd()) || process.cwd(), ".pglite-db");
-  const client = new PGlite(dbPath);
+  const dbPath = process.env.PGLITE_DATA_DIR || path.join(findWorkspaceRoot(process.cwd()) || process.cwd(), ".pglite-db");
+  const configuredInitialMemoryMb = Number(process.env.PGLITE_INITIAL_MEMORY_MB || "128");
+  const initialMemoryMb = Number.isFinite(configuredInitialMemoryMb)
+    ? Math.max(128, Math.min(256, configuredInitialMemoryMb))
+    : 128;
+  const client = new PGlite(dbPath, {
+    initialMemory: initialMemoryMb * 1024 * 1024,
+    startParams: [
+      "--single", "-F", "-O", "-j",
+      "-c", "search_path=public",
+      "-c", "exit_on_error=false",
+      "-c", "log_checkpoints=false",
+      "-c", "max_worker_processes=0",
+      "-c", "max_parallel_workers=0",
+      "-c", "max_parallel_workers_per_gather=0",
+      "-c", "shared_buffers=8MB",
+      "-c", "work_mem=1MB",
+      "-c", "maintenance_work_mem=8MB",
+    ],
+  });
   db = drizzlePglite(client, { schema });
 
   // Read and execute schema migration to create tables

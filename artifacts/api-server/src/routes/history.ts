@@ -225,3 +225,190 @@ historyRouter.get("/stats", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Greška pri dohvatanju statistike historije", message: error.message });
   }
 });
+
+// GET /api/history/renewals — Prediktivni radar za obnovu ugovora konkurenata
+historyRouter.get("/renewals", async (req: Request, res: Response) => {
+  try {
+    const checkCount = await db.select().from(historicalAwardsTable).limit(1);
+    if (checkCount.length === 0) {
+      await seedHistoryData();
+    }
+
+    const rows = await db.select().from(historicalAwardsTable);
+    const now = new Date();
+
+    const renewals = rows.map((r: any) => {
+      const awardDate = new Date(r.awardDate);
+      // Ako u nazivu stoji 2 ili 3 godine, trajanje je duže, inače standardno 12 mjeseci
+      let durationMonths = 12;
+      const lowerProc = (r.procedureName || "").toLowerCase();
+      if (lowerProc.includes("3 godine") || lowerProc.includes("36 mjeseci")) durationMonths = 36;
+      else if (lowerProc.includes("2 godine") || lowerProc.includes("24 mjeseca")) durationMonths = 24;
+
+      const expiryDate = new Date(awardDate);
+      expiryDate.setMonth(expiryDate.getMonth() + durationMonths);
+
+      const projectedNoticeDate = new Date(expiryDate);
+      projectedNoticeDate.setDate(projectedNoticeDate.getDate() - 45); // Objava tendera obično 45 dana prije isteka starog
+
+      const diffTime = expiryDate.getTime() - now.getTime();
+      const daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      let urgency: "critical" | "high" | "medium" | "low" = "low";
+      if (daysUntilExpiry <= 30) urgency = "critical";
+      else if (daysUntilExpiry <= 60) urgency = "high";
+      else if (daysUntilExpiry <= 120) urgency = "medium";
+
+      const category = lowerProc.includes("tehničk") || lowerProc.includes("tehnick") || (r.cpvKod || "").startsWith("7163")
+        ? "Tehnički pregled"
+        : lowerProc.includes("kasko") || lowerProc.includes("vozil")
+        ? "Osiguranje vozila (AO/Kasko)"
+        : lowerProc.includes("imovin")
+        ? "Osiguranje imovine"
+        : "Nezgoda i lica";
+
+      return {
+        id: r.id,
+        procedureName: r.procedureName,
+        contractingAuth: r.contractingAuth,
+        winnerName: r.winnerName,
+        winningBidAmount: r.winningBidAmount,
+        estimatedValue: r.estimatedValue || Math.round(r.winningBidAmount * 1.15),
+        discountPct: r.discountPct || 13,
+        awardDate: r.awardDate,
+        expiryDate: expiryDate.toISOString().split("T")[0],
+        projectedNoticeDate: projectedNoticeDate.toISOString().split("T")[0],
+        daysUntilExpiry,
+        urgency,
+        category,
+        ejnBroj: r.ejnBroj,
+      };
+    })
+    .sort((a: any, b: any) => a.daysUntilExpiry - b.daysUntilExpiry);
+
+    const urgentCount = renewals.filter((r: any) => r.urgency === "critical").length;
+    const upcomingCount = renewals.filter((r: any) => r.urgency === "high" || r.urgency === "medium").length;
+    const totalPipelineKM = renewals.reduce((acc: number, r: any) => acc + r.winningBidAmount, 0);
+
+    res.json({
+      renewals,
+      stats: {
+        total: renewals.length,
+        urgentCount,
+        upcomingCount,
+        totalPipelineKM,
+      },
+    });
+  } catch (error: any) {
+    console.error("Greška u GET /api/history/renewals:", error);
+    res.status(500).json({ error: "Greška pri dohvatanju radara za obnovu", message: error.message });
+  }
+});
+
+// GET /api/history/battlecards — Glava-uz-glavu analiza rivalskih osiguravajućih društava
+historyRouter.get("/battlecards", async (req: Request, res: Response) => {
+  try {
+    const rows = await db.select().from(historicalAwardsTable);
+    
+    // Taktike i profili konkurenata
+    const competitorPlaybooks: Record<string, {
+      aggressiveness: "Vrlo visoka" | "Visoka" | "Umjerena" | "Konzervativna";
+      preferredSegments: string[];
+      weakness: string;
+      tacticalAdvice: string;
+      complaintTendency: "Često se žali" | "Povremeno" | "Rijetko";
+    }> = {
+      "Euroherc osiguranje d.d.": {
+        aggressiveness: "Vrlo visoka",
+        preferredSegments: ["Kasko i AO vozni parkovi", "Javna komunalna preduzeća"],
+        weakness: "Idu u agresivan damping na e-aukciji (-16% do -22%), ali često imaju propuste u potpunosti servisne mreže po kantonima.",
+        tacticalAdvice: "Ne ulaziti u direktan rat cijenama ispod 15% marže. Insistirati na provjeri ispunjenosti uslova lokacije servisa.",
+        complaintTendency: "Često se žali",
+      },
+      "Sarajevo Osiguranje d.d.": {
+        aggressiveness: "Visoka",
+        preferredSegments: ["Federalna ministarstva", "Vozni parkovi policije", "Veliki sistemi (Elektroprivreda)"],
+        weakness: "Dugogodišnji status 'domaćeg' favorita stvara inertnost u pripremi alternativnih tehničkih specifikacija.",
+        tacticalAdvice: "Iskoristiti prednost modernih digitalnih servisa i brze isplate šteta ASA Central. Pritisnuti na e-aukciji u zadnjem krugu.",
+        complaintTendency: "Povremeno",
+      },
+      "Triglav Osiguranje d.d.": {
+        aggressiveness: "Umjerena",
+        preferredSegments: ["Kolektivno zdravstveno i nezgoda", "Imovina velikih industrijskih objekata"],
+        weakness: "Rijetko spuštaju cijenu ispod -10% na e-aukciji. Vezani su za stroge korporativne tablice profitabilnosti.",
+        tacticalAdvice: "Kada je Triglav jedini konkurent, umjereno agresivna ponuda (-11% do -13%) gotovo sigurno osigurava pobjedu.",
+        complaintTendency: "Rijetko",
+      },
+      "Croatia osiguranje d.d.": {
+        aggressiveness: "Visoka",
+        preferredSegments: ["Hercegovački kantoni", "Elektroprenos", "Medicinske ustanove"],
+        weakness: "Slabija koncentracija vlastitih stanica tehničkog pregleda u centralnoj Bosni.",
+        tacticalAdvice: "Istaknuti integrisanu ponudu osiguranja i tehničkih pregleda na vlastitim stanicama ASA Central.",
+        complaintTendency: "Povremeno",
+      },
+      "Wiener osiguranje VIG": {
+        aggressiveness: "Konzervativna",
+        preferredSegments: ["Imovinska osiguranja", "Kombinovana odgovornost"],
+        weakness: "Spor proces odobravanja velikih flotnih popusta od strane centrale.",
+        tacticalAdvice: "Iskoristiti brzinu odobravanja cijena ASA Central Uprave za tenderske rokove.",
+        complaintTendency: "Rijetko",
+      },
+      "Adriatic osiguranje d.d.": {
+        aggressiveness: "Visoka",
+        preferredSegments: ["AO vozni parkovi", "Gradski saobraćaj"],
+        weakness: "Fokus samo na cijenu, često bez dugoročnog servisa.",
+        tacticalAdvice: "Ponuditi dodatne pakete asistencije na cesti i zamjenskih vozila.",
+        complaintTendency: "Često se žali",
+      },
+    };
+
+    // Agregacija iz stvarnih podataka
+    const competitorMap = new Map<string, any>();
+
+    for (const r of rows) {
+      const name = r.winnerName || "Ostali";
+      const existing = competitorMap.get(name) || {
+        name,
+        totalWonCount: 0,
+        totalWonAmountKM: 0,
+        discounts: [],
+        authorities: new Set<string>(),
+      };
+
+      existing.totalWonCount += 1;
+      existing.totalWonAmountKM += r.winningBidAmount || 0;
+      if (r.discountPct) existing.discounts.push(r.discountPct);
+      if (r.contractingAuth) existing.authorities.add(r.contractingAuth);
+      competitorMap.set(name, existing);
+    }
+
+    const battlecards = Object.keys(competitorPlaybooks).map(name => {
+      const stats = competitorMap.get(name) || {
+        totalWonCount: 0,
+        totalWonAmountKM: 0,
+        discounts: [12],
+        authorities: new Set(),
+      };
+      const playbook = competitorPlaybooks[name];
+
+      const avgDiscount = stats.discounts.length > 0
+        ? Math.round((stats.discounts.reduce((a: number, b: number) => a + b, 0) / stats.discounts.length) * 10) / 10
+        : 12.5;
+
+      return {
+        competitorName: name,
+        totalWonCount: stats.totalWonCount,
+        totalWonAmountKM: stats.totalWonAmountKM,
+        avgAuctionDiscountPct: avgDiscount,
+        strongholds: Array.from(stats.authorities).slice(0, 4),
+        ...playbook,
+      };
+    });
+
+    res.json({ battlecards });
+  } catch (error: any) {
+    console.error("Greška u GET /api/history/battlecards:", error);
+    res.status(500).json({ error: "Greška pri dohvatanju battlecards analize", message: error.message });
+  }
+});
+

@@ -13,7 +13,7 @@ export default function LoginPage() {
   const queryClient = useQueryClient();
 
   const [email, setEmail] = useState("admin@asacentral.ba");
-  const [password, setPassword] = useState("Admin1234!");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,7 +23,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const apiBase = (import.meta as any).env?.VITE_API_URL || "http://localhost:5000";
+      // Use the same origin in production. Vite's dev proxy handles /api locally.
+      const apiBase = (import.meta as any).env?.VITE_API_URL || "";
       const res = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

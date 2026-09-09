@@ -154,6 +154,158 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
+      {/* WIN/LOSS POST-MORTEM & LOSS RATIO INTELLIGENCE */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Win/Loss Post-Mortem */}
+        <Card className="shadow-sm border-gray-200">
+          <CardHeader className="border-b pb-3 bg-gray-50/50">
+            <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
+              🎯 Win / Loss Post-Mortem analiza tendera
+            </CardTitle>
+            <p className="text-xs text-gray-500">
+              Analiza uzroka ishoda na javnim nabavkama osiguranja i tehničkih pregleda (zadnjih 12 mjeseci)
+            </p>
+          </CardHeader>
+          <CardContent className="p-5 space-y-4">
+            <div>
+              <div className="flex justify-between text-xs font-semibold mb-1">
+                <span className="text-gray-700">Damping i agresivni popust u e-aukciji</span>
+                <span className="text-red-600 font-bold">42% izgubljenih</span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-2.5">
+                <div className="bg-red-500 h-2.5 rounded-full" style={{ width: "42%" }}></div>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-0.5">Dominantno Euroherc i Adriatic na tenderima komunalnih preduzeća</p>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-xs font-semibold mb-1">
+                <span className="text-gray-700">Diskriminirajući geografski uslovi (Čl. 54 ZJN)</span>
+                <span className="text-amber-600 font-bold">26% propuštenih</span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-2.5">
+                <div className="bg-amber-500 h-2.5 rounded-full" style={{ width: "26%" }}></div>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-0.5">Ugovorni organi tražili servis / stanicu u radijusu &lt; 15 km bez zakonskog osnova</p>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-xs font-semibold mb-1">
+                <span className="text-gray-700">Odbijena žalba URŽ-u / propušten prekluzivni rok</span>
+                <span className="text-orange-600 font-bold">14% ishoda</span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-2.5">
+                <div className="bg-orange-400 h-2.5 rounded-full" style={{ width: "14%" }}></div>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-xs font-semibold mb-1">
+                <span className="text-gray-700">Nepotpuna dokumentacija podugovarača / partnera</span>
+                <span className="text-gray-600 font-bold">11% odbacivanja</span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-2.5">
+                <div className="bg-gray-400 h-2.5 rounded-full" style={{ width: "11%" }}></div>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t bg-emerald-50/50 -mx-5 -mb-5 p-4 rounded-b-lg border-emerald-100">
+              <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider block mb-1">Ključni faktori pobjede ASA Central:</span>
+              <ul className="text-xs text-emerald-700 space-y-1 list-disc list-inside">
+                <li>Vlastita razgranata mreža stanica tehničkog pregleda u FBiH i RS</li>
+                <li>Brza obrada i isplata odštetnih zahtjeva (reputacija kod direktora organa)</li>
+                <li>Kompletna ZJN pravna usklađenost bez formalnih nedostataka</li>
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Loss Ratio Intelligence */}
+        <Card className="shadow-sm border-gray-200">
+          <CardHeader className="border-b pb-3 bg-gray-50/50">
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  📊 Profitabilnost i Loss Ratio portfelja (Štete / Premija)
+                </CardTitle>
+                <p className="text-xs text-gray-500">
+                  Usklađenost premijskih prihoda i šteta po linijama osiguranja
+                </p>
+              </div>
+              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-xs">
+                Ukupno: 52.8% (Zdrav portfelj)
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="p-5 space-y-3.5">
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-white">
+              <div>
+                <span className="font-semibold text-sm text-gray-900 block">Autoodgovornost (AO)</span>
+                <span className="text-xs text-gray-400">Flote vozila javnih institucija i komunalnih preduzeća</span>
+              </div>
+              <div className="text-right">
+                <span className="text-sm font-bold text-emerald-600">48.2%</span>
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] ml-2">
+                  Sigurna margina
+                </Badge>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-white">
+              <div>
+                <span className="font-semibold text-sm text-gray-900 block">Kasko osiguranje vozila</span>
+                <span className="text-xs text-gray-400">Putnička, teretna i specijalna vozila (MUP, hitne pomoći)</span>
+              </div>
+              <div className="text-right">
+                <span className="text-sm font-bold text-emerald-600">64.5%</span>
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] ml-2">
+                  U granicama
+                </Badge>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-white">
+              <div>
+                <span className="font-semibold text-sm text-gray-900 block">Osiguranje imovine (Požar i lom mašina)</span>
+                <span className="text-xs text-gray-400">Objekti bolnica, fakulteta, termoelektrana i vodovoda</span>
+              </div>
+              <div className="text-right">
+                <span className="text-sm font-bold text-emerald-600">32.1%</span>
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] ml-2">
+                  Visokoprofitabilno
+                </Badge>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-white">
+              <div>
+                <span className="font-semibold text-sm text-gray-900 block">Kolektivno osiguranje od nezgode radnika</span>
+                <span className="text-xs text-gray-400">Zaposleni u organima uprave i javnim preduzećima</span>
+              </div>
+              <div className="text-right">
+                <span className="text-sm font-bold text-emerald-600">41.0%</span>
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] ml-2">
+                  Profitabilno
+                </Badge>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-white">
+              <div>
+                <span className="font-semibold text-sm text-gray-900 block">Dobrovoljno zdravstveno osiguranje (DZO)</span>
+                <span className="text-xs text-gray-400">Sistematski pregledi i bolničko liječenje</span>
+              </div>
+              <div className="text-right">
+                <span className="text-sm font-bold text-amber-600">78.4%</span>
+                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] ml-2">
+                  Oprez na aukciji
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card className="shadow-sm">
         <CardHeader>
           <CardTitle className="text-base">Tenderi koji ističu u narednih {days} dana</CardTitle>

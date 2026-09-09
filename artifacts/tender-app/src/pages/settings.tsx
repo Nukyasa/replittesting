@@ -176,7 +176,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="p-3 bg-white border rounded">
                   <span className="text-[10px] text-gray-400 font-semibold uppercase block">Korisničko ime</span>
-                  <span className="font-bold text-primary">almir.zeljkovic</span>
+                  <span className="font-bold text-primary">Postavlja se na serveru</span>
                 </div>
                 <div className="p-3 bg-white border rounded">
                   <span className="text-[10px] text-gray-400 font-semibold uppercase block">Status konekcije</span>

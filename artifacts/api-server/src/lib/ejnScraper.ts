@@ -10,6 +10,9 @@ import { logger } from "./logger";
 import AdmZip from "adm-zip";
 
 export async function fetchDocumentsForTender(tenderId: string, noticeNumber: string) {
+  const username = process.env.EJN_USERNAME || process.env.EJN_USER;
+  const password = process.env.EJN_PASSWORD || process.env.EJN_PASS;
+  if (!username || !password) throw new Error("EJN_USERNAME and EJN_PASSWORD are required.");
   logger.info({ tenderId, noticeNumber }, "Starting EJN Scraper");
   
   const browser = await puppeteer.launch({ 
@@ -39,8 +42,8 @@ export async function fetchDocumentsForTender(tenderId: string, noticeNumber: st
     logger.info("Navigating to EJN login...");
     await page.goto("https://www.ejn.gov.ba/Profile/SignIn", { waitUntil: "networkidle2" });
     
-    await page.type("#Username", "almir.zeljkovic-user");
-    await page.type("#Password", "Start.2024-sifra");
+    await page.type("#Username", username);
+    await page.type("#Password", password);
     
     logger.info("Clicking login...");
     await page.click("button[type='submit']");

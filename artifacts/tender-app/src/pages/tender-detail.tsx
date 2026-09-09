@@ -22,7 +22,7 @@ import {
   ArrowLeft, BrainCircuit, ExternalLink, FileText, CheckCircle2, AlertTriangle,
   Send, Trash2, Plus, Bookmark, BookmarkCheck, Loader2, MessageSquare, StickyNote,
   FileDown, Clock, ShieldCheck, Gavel, ListChecks, History, Zap, ChevronRight,
-  TrendingUp, Calendar, Download, Bot, RefreshCw, X
+  TrendingUp, Calendar, Download, Bot, RefreshCw, X, Package, Swords, FileSpreadsheet
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { bs } from "date-fns/locale";
@@ -34,6 +34,10 @@ import { TenderHistory } from "@/components/TenderHistory";
 import { CompanyMatch } from "@/components/CompanyMatch";
 import { SenaDecisionCard } from "@/components/SenaDecisionCard";
 import { TenderChangesDiff } from "@/components/TenderChangesDiff";
+import { BidPackModal } from "@/components/BidPackModal";
+import { LiveAuctionWarRoom } from "@/components/LiveAuctionWarRoom";
+import { UrzAppealCard } from "@/components/UrzAppealCard";
+import { PostSubmissionTracker } from "@/components/PostSubmissionTracker";
 
 type TenderDetail = {
   id: string;
@@ -736,6 +740,35 @@ export default function TenderDetail() {
   // Win Probability & CA History Modal states
   const [showWinProbabilityModal, setShowWinProbabilityModal] = useState(false);
   const [showCaHistoryModal, setShowCaHistoryModal] = useState(false);
+  const [showBidPackModal, setShowBidPackModal] = useState(false);
+  const [showWarRoomModal, setShowWarRoomModal] = useState(false);
+  const [isExtractingFleet, setIsExtractingFleet] = useState(false);
+
+  const handleExtractFleet = async () => {
+    if (!t) return;
+    try {
+      setIsExtractingFleet(true);
+      const res = await fetch(`/api/tenders/${t.id}/extract-fleet-excel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error("Neuspješno generisanje tabele voznog parka");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Vozni_Park_Kalkulacija_${t.externalId || t.id}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success("Excel specifikacija voznog parka uspješno preuzeta!");
+    } catch (err: any) {
+      toast.error(err.message || "Greška pri preuzimanju");
+    } finally {
+      setIsExtractingFleet(false);
+    }
+  };
 
   // Tariff calculator states
   const [calcType, setCalcType] = useState<"fleet" | "property">("fleet");
@@ -1089,14 +1122,39 @@ export default function TenderDetail() {
                 <FileDown className="w-4 h-4 mr-2" /> PDF Sažetak
               </Button>
               <Button 
-                className="bg-emerald-600 text-white hover:bg-emerald-700 shadow-md font-bold px-6"
+                className="bg-emerald-600 text-white hover:bg-emerald-700 shadow-md font-bold px-4"
                 onClick={() => handleGenerateOffer()}
                 disabled={isGenerating}
               >
                 {isGenerating ? (
                   <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generisanje...</>
                 ) : (
-                  <><FileText className="w-4 h-4 mr-2" /> Nacrt ponude (.docx)</>
+                  <><FileText className="w-4 h-4 mr-2" /> Ponuda (.docx)</>
+                )}
+              </Button>
+              <Button 
+                className="bg-primary text-white hover:bg-primary/90 shadow-md font-bold px-4"
+                onClick={() => setShowBidPackModal(true)}
+              >
+                <Package className="w-4 h-4 mr-2" /> Bid Pack (7x DOCX .zip)
+              </Button>
+              <Button 
+                variant="outline"
+                className="border-purple-300 text-purple-700 hover:bg-purple-50 font-bold px-4 shadow-sm"
+                onClick={() => setShowWarRoomModal(true)}
+              >
+                <Swords className="w-4 h-4 mr-2" /> War Room e-Aukcije
+              </Button>
+              <Button 
+                variant="outline"
+                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium px-3 shadow-sm"
+                onClick={handleExtractFleet}
+                disabled={isExtractingFleet}
+              >
+                {isExtractingFleet ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Izvoz tabele...</>
+                ) : (
+                  <><FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> Vozni park (.xlsx)</>
                 )}
               </Button>
               <a href={`/api/tenders/${t.id}/pdf?token=${token}`} target="_blank" rel="noopener noreferrer">
@@ -1178,8 +1236,23 @@ export default function TenderDetail() {
           </TabsList>
 
           {/* PREGLED TAB */}
-          <TabsContent value="radni-dosje" className="mt-6"><TenderWorkspace tenderId={t.id} /></TabsContent>
-          <TabsContent value="izmjene-td" className="mt-6"><TenderChangesDiff tenderId={t.id} tenderTitle={t.title} deadline={t.deadline} /></TabsContent>
+          <TabsContent value="radni-dosje" className="mt-6 space-y-6">
+            <PostSubmissionTracker
+              tenderId={t.id}
+              tenderTitle={t.title}
+              contractingAuth={t.contractingAuth}
+              externalId={t.externalId}
+            />
+            <TenderWorkspace tenderId={t.id} />
+          </TabsContent>
+          <TabsContent value="izmjene-td" className="mt-6 space-y-6">
+            <UrzAppealCard
+              tenderId={t.id}
+              tenderTitle={t.title}
+              contractingAuth={t.contractingAuth}
+            />
+            <TenderChangesDiff tenderId={t.id} tenderTitle={t.title} deadline={t.deadline} />
+          </TabsContent>
           <TabsContent value="historija-dodjela" className="mt-6"><TenderHistory tenderId={t.id} /></TabsContent>
           <TabsContent value="podudarnost-firme" className="mt-6"><CompanyMatch tenderId={t.id} /></TabsContent>
           <TabsContent value="pregled" className="mt-6 space-y-6">
@@ -2803,6 +2876,20 @@ export default function TenderDetail() {
           </div>
         </div>
       )}
+
+      {/* ASA Bid Pack Modal (7x DOCX .zip) */}
+      <BidPackModal
+        isOpen={showBidPackModal}
+        onClose={() => setShowBidPackModal(false)}
+        tender={t}
+      />
+
+      {/* Live E-Auction War Room */}
+      <LiveAuctionWarRoom
+        isOpen={showWarRoomModal}
+        onClose={() => setShowWarRoomModal(false)}
+        tender={t}
+      />
     </div>
   );
 }

@@ -5,8 +5,9 @@ import { Link } from "wouter";
 import { 
   Users, Search, ChevronRight, ChevronLeft, Building, Calculator, 
   Lock, Sparkles, Shield, Bookmark, RotateCcw, ArrowUpDown, 
-  CheckCircle2, AlertTriangle, ExternalLink, Info, Building2
+  CheckCircle2, AlertTriangle, ExternalLink, Info, Building2, Swords
 } from "lucide-react";
+import { CompetitorBattlecards } from "@/components/CompetitorBattlecards";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -79,7 +80,7 @@ function formatValKM(val: number): string {
 export default function SuppliersPage() {
   const queryClient = useQueryClient();
 
-  const [tab, setTab] = useState<"all" | "relevant" | "watched">("all");
+  const [tab, setTab] = useState<"all" | "relevant" | "watched" | "battlecards">("all");
   const [search, setSearch] = useState("");
   const [city, setCity] = useState("all");
   const [cpvCode, setCpvCode] = useState("all");
@@ -262,12 +263,29 @@ export default function SuppliersPage() {
           >
             Praćeni
           </Button>
+
+          <Button
+            variant={tab === "battlecards" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => { setTab("battlecards"); }}
+            className={cn(
+              "rounded-lg font-semibold text-xs px-4 h-9 transition-colors flex items-center gap-1.5 ml-auto border",
+              tab === "battlecards" ? "bg-amber-600 text-white hover:bg-amber-700 shadow-sm border-amber-600" : "text-amber-800 bg-amber-50/80 border-amber-200 hover:bg-amber-100"
+            )}
+          >
+            <Swords className="w-3.5 h-3.5 text-amber-500" />
+            Borbene karte konkurenata (Battlecards)
+          </Button>
         </div>
         <p className="text-xs text-gray-500 pt-1">
-          Sve pravne osobe s javnim tragom dodjele. Bez rangiranja po &quot;uspješnosti&quot;.
+          {tab === "battlecards" ? "Taktički dosjei osiguravajućih kuća (popusti, uporišta, ranjivosti i strategije ponude)" : "Sve pravne osobe s javnim tragom dodjele. Bez rangiranja po \"uspješnosti\"."}
         </p>
       </div>
 
+      {tab === "battlecards" ? (
+        <CompetitorBattlecards />
+      ) : (
+        <>
       {/* 5. Search and Filters Box */}
       <Card className="border-gray-200 shadow-sm bg-white">
         <CardContent className="p-4 space-y-3">
@@ -586,6 +604,8 @@ export default function SuppliersPage() {
           </div>
         </div>
       </Card>
+      </>
+      )}
     </div>
   );
 }

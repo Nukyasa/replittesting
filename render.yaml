@@ -1,12 +1,12 @@
 services:
   - type: web
     name: tender-manager-ai
-    env: node
+    runtime: node
     plan: free
     region: frankfurt
-    buildCommand: pnpm install --frozen-lockfile=false && pnpm --filter tender-app build && pnpm --filter api-server build
-    startCommand: pnpm --filter api-server start
-    healthCheckPath: /api/health
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @workspace/tender-app build && pnpm --filter @workspace/api-server build && pnpm --filter @workspace/api-server exec puppeteer browsers install chrome && node scripts/init-render-db.mjs
+    startCommand: node --max-old-space-size=128 --max-semi-space-size=4 --liftoff-only --wasm-lazy-compilation --wasm-num-compilation-tasks=1 --wasm-max-committed-code-mb=32 artifacts/api-server/dist/index.mjs
+    healthCheckPath: /api/healthz
     envVars:
       - key: NODE_ENV
         value: production
@@ -14,5 +14,13 @@ services:
         value: 10000
       - key: JWT_SECRET
         generateValue: true
+      - key: ADMIN_EMAIL
+        value: admin@asacentral.ba
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/project/src/.cache/puppeteer
+      - key: PGLITE_INITIAL_MEMORY_MB
+        value: "128"
       - key: DB_START_DELAY_MS
         value: "5000"

@@ -115,22 +115,20 @@ ALTER TABLE historical_awards ADD COLUMN IF NOT EXISTS estimated_value double pr
 ALTER TABLE historical_awards ADD COLUMN IF NOT EXISTS discount_pct double precision;
 CREATE TABLE IF NOT EXISTS urz_decisions (
   id text PRIMARY KEY,
-  decision_number text NOT NULL,
+  case_number text NOT NULL UNIQUE,
   decision_date timestamp NOT NULL,
-  contracting_authority text NOT NULL,
+  contracting_auth text NOT NULL,
   procedure_name text NOT NULL,
-  procedure_type text NOT NULL,
-  complaint_reason text NOT NULL,
+  appellant text NOT NULL,
   outcome text NOT NULL,
   outcome_label text NOT NULL,
-  sporni_uslov text,
-  legal_basis text,
+  sporni_uslov text NOT NULL,
+  legal_basis text NOT NULL,
   summary text NOT NULL,
-  ejn_proc_id text,
-  ejn_doc_url text,
-  tags text[] NOT NULL DEFAULT '{}',
+  ejn_broj text,
+  category text NOT NULL DEFAULT 'Osiguranje',
   created_at timestamp NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS urz_decisions_auth_idx ON urz_decisions(contracting_authority);
+CREATE INDEX IF NOT EXISTS urz_decisions_auth_idx ON urz_decisions(contracting_auth);
 CREATE INDEX IF NOT EXISTS urz_decisions_outcome_idx ON urz_decisions(outcome);
 `;

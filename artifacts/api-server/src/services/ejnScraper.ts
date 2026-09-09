@@ -315,8 +315,11 @@ async function sendHighRelevanceNotifications(insertedIds: string[]): Promise<vo
 }
 
 export async function runEjnScraper(logId: string, signal?: AbortSignal): Promise<number> {
-  const username = process.env.EJN_USER || "almir.zeljkovic";
-  const password = process.env.EJN_PASS || "Start.2024";
+  const username = process.env.EJN_USERNAME || process.env.EJN_USER;
+  const password = process.env.EJN_PASSWORD || process.env.EJN_PASS;
+  if (!username || !password) {
+    throw new Error("EJN_USERNAME and EJN_PASSWORD are required for authenticated EJN scraping.");
+  }
 
   logger.info({ username }, "[EJN SECURE] Pokrećem autorizaciju preko Puppeteer-a na https://www.ejn.gov.ba/Home/Index");
   scraperEvents.emit("progress", {

@@ -10,6 +10,9 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Render terminates HTTPS at its reverse proxy.
+if (process.env.RENDER === "true") app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,

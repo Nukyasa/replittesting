@@ -1553,4 +1553,83 @@ tendersRouter.get("/:id/parsed-data", async (req, res) => {
   }
 });
 
-// Duplicate routes removed
+// POST /api/tenders/:id/generate-bid-pack — 1-Click ZIP generator celokupne ponude
+tendersRouter.post("/:id/generate-bid-pack", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { generateBidPackZip } = await import("../services/bidPackGenerator");
+    const [tender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id as string)).limit(1);
+    if (!tender) return res.status(404).json({ error: "Tender nije pronađen." });
+
+    const { customOfferAmount, signatoryName, signatoryTitle } = req.body || {};
+    const zipBuffer = await generateBidPackZip({
+      tender,
+      customOfferAmount: customOfferAmount ? Number(customOfferAmount) : undefined,
+      signatoryName,
+      signatoryTitle,
+    });
+
+    const safeTitle = (tender.title || "Tender").slice(0, 30).replace(/[^a-zA-Z0-9]/g, "_");
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="Ponuda_ASACentral_${safeTitle}.zip"`);
+    return res.send(zipBuffer);
+  } catch (err: any) {
+    logger.error({ id, err: err.message }, "Failed to generate bid pack");
+    return res.status(500).json({ error: "Greška pri kreiranju paketa ponude", message: err.message });
+  }
+});
+
+// GET /api/tenders/:id/discrimination-check — AI analiza spornih i diskriminatornih uslova
+tendersRouter.get("/:id/discrimination-check", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { detectTenderDiscrimination } = await import("../services/discriminationDetector");
+    const [tender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id as string)).limit(1);
+    if (!tender) return res.status(404).json({ error: "Tender nije pronađen." });
+
+    const result = detectTenderDiscrimination(tender);
+    return res.json(result);
+  } catch (err: any) {
+    logger.error({ id, err: err.message }, "Failed to check discrimination");
+    return res.status(500).json({ error: "Greška pri analizi diskriminacije", message: err.message });
+  }
+});
+
+// POST /api/tenders/:id/generate-urz-appeal — Generisanje formalnog podneska žalbe URŽ-u
+tendersRouter.post("/:id/generate-urz-appeal", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { generateUrzAppealDocx } = await import("../services/discriminationDetector");
+    const [tender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id as string)).limit(1);
+    if (!tender) return res.status(404).json({ error: "Tender nije pronađen." });
+
+    const docxBuffer = await generateUrzAppealDocx(tender, req.body?.issueId);
+    const safeTitle = (tender.title || "Tender").slice(0, 30).replace(/[^a-zA-Z0-9]/g, "_");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", `attachment; filename="Zalba_URZ_BiH_${safeTitle}.docx"`);
+    return res.send(docxBuffer);
+  } catch (err: any) {
+    logger.error({ id, err: err.message }, "Failed to generate URZ appeal");
+    return res.status(500).json({ error: "Greška pri generisanju žalbe", message: err.message });
+  }
+});
+
+// POST /api/tenders/:id/extract-fleet-excel — Izvoz specifikacije voznog parka u Excel (.xlsx)
+tendersRouter.post("/:id/extract-fleet-excel", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { generateFleetExcel } = await import("../services/fleetExcelExtractor");
+    const [tender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id as string)).limit(1);
+    if (!tender) return res.status(404).json({ error: "Tender nije pronađen." });
+
+    const excelBuffer = await generateFleetExcel(tender);
+    const safeTitle = (tender.title || "Vozni_park").slice(0, 30).replace(/[^a-zA-Z0-9]/g, "_");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="Specifikacija_Vozila_${safeTitle}.xlsx"`);
+    return res.send(excelBuffer);
+  } catch (err: any) {
+    logger.error({ id, err: err.message }, "Failed to extract fleet excel");
+    return res.status(500).json({ error: "Greška pri izvozu u Excel", message: err.message });
+  }
+});
+

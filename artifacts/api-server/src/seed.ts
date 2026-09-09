@@ -581,16 +581,58 @@ const AI_ANALYSES = [
 export async function seedDatabase() {
   logger.info("Starting database seed...");
 
-  // Check if already seeded
+  const isProduction = process.env.NODE_ENV === "production";
+  const productionPassword = process.env.ADMIN_PASSWORD;
+  if (isProduction && (!productionPassword || productionPassword.length < 10)) {
+    throw new Error("Set ADMIN_PASSWORD to at least 10 characters before starting production.");
+  }
+
+  // Keep the production administrator synchronized with Render's generated
+  // password. This also repairs databases created by an older deploy after a
+  // Blueprint secret is regenerated.
+  if (isProduction) {
+    const productionEmail = process.env.ADMIN_EMAIL || "admin@asacentral.ba";
+    const hash = await bcrypt.hash(productionPassword!, 12);
+    const [existingAdmin] = await db
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .where(eq(usersTable.email, productionEmail))
+      .limit(1);
+
+    if (existingAdmin) {
+      await db.update(usersTable).set({
+        password: hash,
+        name: "Administrator",
+        role: "admin",
+        department: "IT",
+      }).where(eq(usersTable.id, existingAdmin.id));
+      logger.info({ email: productionEmail }, "Synchronized production administrator");
+    } else {
+      await db.insert(usersTable).values({
+        id: nanoid(),
+        email: productionEmail,
+        password: hash,
+        name: "Administrator",
+        role: "admin",
+        department: "IT",
+        companyTags: ["Insurance", "Procurement"],
+      });
+      logger.info({ email: productionEmail }, "Created production administrator");
+    }
+    return;
+  }
+
+  // Check if the local demo database is already seeded.
   const existingUsers = await db.select().from(usersTable).limit(1);
   if (existingUsers.length > 0) {
     logger.info("Database already seeded, skipping");
     return;
   }
 
-  // Seed users
+  // Seed local demo users.
+  const seedUsers = SEED_USERS;
   const userIds: string[] = [];
-  for (const u of SEED_USERS) {
+  for (const u of seedUsers) {
     const hash = await bcrypt.hash(u.password, 12);
     const id = nanoid();
     await db.insert(usersTable).values({

@@ -24,6 +24,7 @@ import EarlyWarningPage from "@/pages/early-warning";
 import WatchlistsPage from "@/pages/watchlists";
 import CompanyCheckPage from "@/pages/company-check";
 import HistoryPage from "@/pages/history";
+import RenewalRadarPage from "@/pages/renewal-radar";
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
               <Route path="/" component={DashboardPage} />
               <Route path="/dashboard" component={DashboardPage} />
               <Route path="/tenders" component={TendersPage} />
+              <Route path="/renewal-radar" component={RenewalRadarPage} />
               <Route path="/history" component={HistoryPage} />
               <Route path="/tenders/:id" component={TenderDetailPage} />
               <Route path="/tender-projects" component={TenderProjectsPage} />

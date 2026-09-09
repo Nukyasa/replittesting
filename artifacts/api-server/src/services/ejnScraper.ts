@@ -1,4 +1,5 @@
 import { db } from "@workspace/db";
+import puppeteer from 'puppeteer';
 import {
   tendersTable,
   scraperLogsTable,
@@ -11,8 +12,58 @@ import { eq, gte, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid";
 import { logger } from "../lib/logger";
 import { scraperEvents } from "../lib/scraperEvents";
+import { isRealInsuranceTender } from "../lib/tenderFilter";
 
 const EJN_BASE = "https://open.ejn.gov.ba";
+
+interface RetryOptions {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+}
+
+const DEFAULT_RETRY_OPTIONS: RetryOptions = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 10000,
+};
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = DEFAULT_RETRY_OPTIONS
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= options.maxRetries + 1; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (attempt > options.maxRetries) {
+        throw lastError;
+      }
+
+      const delay = Math.min(
+        options.baseDelayMs * Math.pow(2, attempt - 1),
+        options.maxDelayMs
+      );
+
+      logger.warn(
+        { attempt, maxRetries: options.maxRetries, delay, error: lastError.message },
+        `Retryable error, attempt ${attempt}/${options.maxRetries + 1}, waiting ${delay}ms`
+      );
+
+      await sleep(delay);
+    }
+  }
+
+  throw lastError;
+}
 
 const INSURANCE_FILTER =
   "contains(tolower(ProcedureName),'osiguranj') or " +
@@ -208,7 +259,7 @@ async function detectAndSaveChanges(
   };
 
   const changedFields = changes.map((c) => fieldLabels[c.field] || c.field).join(", ");
-  const notifications = allUsers.map((user) => ({
+  const notifications = allUsers.map((user: any) => ({
     id: nanoid(),
     userId: user.id,
     type: "change",
@@ -235,7 +286,7 @@ async function sendHighRelevanceNotifications(insertedIds: string[]): Promise<vo
       .limit(10);
 
     const relevantIds = new Set(insertedIds);
-    const matched = highScoreTenders.filter((t) => relevantIds.has(t.id));
+    const matched = highScoreTenders.filter((t: any) => relevantIds.has(t.id));
     if (matched.length === 0) return;
 
     const allUsers = await db.select({ id: usersTable.id }).from(usersTable);
@@ -264,134 +315,192 @@ async function sendHighRelevanceNotifications(insertedIds: string[]): Promise<vo
 }
 
 export async function runEjnScraper(logId: string, signal?: AbortSignal): Promise<number> {
+  const username = process.env.EJN_USER || "almir.zeljkovic";
+  const password = process.env.EJN_PASS || "Start.2024";
+
+  logger.info({ username }, "[EJN SECURE] Pokrećem autorizaciju preko Puppeteer-a na https://www.ejn.gov.ba/Home/Index");
+  scraperEvents.emit("progress", {
+    source: "ejn",
+    status: "running",
+    message: `[EJN SECURE] Pokrećem prijavu u headless Chrome browseru sa nalogom: ${username}...`,
+  });
+
   let inserted = 0;
   let updated = 0;
-  let skip = 0;
-  const top = 100;
-  let hasMore = true;
   const insertedIds: string[] = [];
+  let items: any[] = [];
 
-  while (hasMore) {
-    if (signal?.aborted) break;
+  try {
+    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const page = await browser.newPage();
+    
+    await page.goto('https://www.ejn.gov.ba/Home/Index', { waitUntil: 'networkidle2' });
+    
+    await page.evaluate(() => {
+      // @ts-ignore
+      const loginBtn = document.querySelector('a[href="/Profile/SignIn"]');
+      // @ts-ignore
+      if (loginBtn) loginBtn.click();
+    });
+    
+    await page.waitForSelector('#UserName', { visible: true });
+    await new Promise(r => setTimeout(r, 1000));
+    
+    await page.type('#UserName', username);
+    await page.type('#Password', password);
+    await page.click('button[type="submit"].btn-sign-in');
+    
+    await new Promise(r => setTimeout(r, 3000));
+    
+    logger.info("[EJN SECURE] Prijava uspješna! Sesijski kolačići učitani.");
+    scraperEvents.emit("progress", {
+      source: "ejn",
+      status: "running",
+      message: `[EJN SECURE] Prijava uspješna! Pretražujem najnovije tendere...`,
+    });
 
-    const url = buildLotsUrl(top, skip);
+    await page.setRequestInterception(true);
 
-    let items: EjnLot[] = [];
-    try {
-      const response = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "ASA-Tender-Intelligence/1.0" },
-        signal: AbortSignal.timeout(30000),
+    const searchResponsePromise = new Promise<any[]>((resolve) => {
+      page.on('request', interceptedRequest => {
+        interceptedRequest.continue();
       });
 
-      if (!response.ok) {
-        logger.warn({ status: response.status, url }, "EJN Lots API non-OK response");
-        break;
-      }
-
-      const data = await response.json() as { value?: EjnLot[] };
-      items = data.value || [];
-    } catch (err) {
-      logger.error({ err }, "EJN Lots fetch failed");
-      break;
-    }
-
-    if (items.length === 0) break;
-
-    logger.info({ count: items.length, skip }, "EJN insurance lots fetched");
-
-    for (const item of items) {
-      if (signal?.aborted) break;
-
-      const externalId = `EJN-LOT-${item.Id}`;
-
-      const [existing] = await db
-        .select({
-          id: tendersTable.id,
-          deadline: tendersTable.deadline,
-          questionsDeadline: tendersTable.questionsDeadline,
-          estimatedValue: tendersTable.estimatedValue,
-          status: tendersTable.status,
-          title: tendersTable.title,
-        })
-        .from(tendersTable)
-        .where(eq(tendersTable.externalId, externalId))
-        .limit(1);
-
-      if (existing) {
-        await detectAndSaveChanges(existing.id, existing, item);
-        updated++;
-        continue;
-      }
-
-      const category = mapCategory(item.ContractCategoryName, item.ContractType);
-      const entity = mapEntity(item.ContractingAuthorityAdministrativeUnitName, item.ContractingAuthorityCityName);
-      const source = mapSource(item.ContractType);
-      const status = mapStatus(item.Status);
-      const statusName = mapStatusName(item.Status);
-
-      const deadline = item.ProcurementPhaseOfferSubmissionDeadline
-        ? new Date(item.ProcurementPhaseOfferSubmissionDeadline)
-        : fallbackDeadline();
-
-      const questionsDeadline = item.ApplicationDeadlineDateTime
-        ? new Date(item.ApplicationDeadlineDateTime) : null;
-
-      const ejnLink = `https://next.ejn.gov.ba/bs-latn-ba/procurements/procedure-call/${item.ProcedureId ?? item.Id}`;
-
-      const tenderId = nanoid();
-      await db.insert(tendersTable).values({
-        id: tenderId,
-        externalId,
-        title: item.ProcedureName || `Lot ${item.Id}`,
-        contractingAuth: item.ContractingAuthorityName || "N/A",
-        entity,
-        category,
-        source,
-        tenderType: item.ContractType || "Services",
-        status,
-        statusName,
-        publicationDate: item.LastUpdated ? new Date(item.LastUpdated) : new Date(),
-        deadline,
-        questionsDeadline,
-        estimatedValue: item.EstimatedValue ?? null,
-        currency: "KM",
-        cpvCodes: [],
-        description: item.ShortDescription || item.ContractCategoryName || null,
-        sourceUrl: ejnLink,
-        hasEAuction: item.IsAuctionOnline ?? false,
-        awardCriteria: item.AwardCriterion || null,
-        awardCriteriaDetails: null,
-        guaranteeAmount: null,
-        guaranteeType: null,
-        tenderPreparationCost: null,
+      page.on('response', async (response) => {
+        const url = response.url();
+        const request = response.request();
+        if (request.method() === 'POST' && url.includes('/api/Announcement/Search')) {
+          try {
+            const body = await response.json();
+            if (body && body.records) {
+              resolve(body.records);
+            }
+          } catch(e) {}
+        }
       });
+      setTimeout(() => resolve([]), 20000);
+    });
 
-      scraperEvents.emit("new_tender", {
-        tender: {
-          id: tenderId,
-          title: item.ProcedureName || `Lot ${item.Id}`,
-          contractingAuth: item.ContractingAuthorityName || "N/A",
-          estimatedValue: item.EstimatedValue ?? null,
-          currency: "KM",
-          deadline: deadline.toISOString(),
-        },
-        isInsurance: true,
-      });
+    await page.goto('https://www.ejn.gov.ba/Announcement/Search', { waitUntil: 'networkidle2' });
 
-      insertedIds.push(tenderId);
-      inserted++;
-    }
+    // Wait for the form to be ready
+    await page.waitForSelector('#Procedure', { visible: true });
+    await new Promise(r => setTimeout(r, 1000));
+    
+    // Simulate clicking search to get the latest tenders without any keyword filter
+    await page.evaluate(() => {
+      // @ts-ignore
+      const btn = document.querySelector('.btn-search');
+      // @ts-ignore
+      if (btn) btn.click();
+    });
 
-    if (items.length < top) {
-      hasMore = false;
-    } else {
-      skip += top;
-    }
-
-    if (skip >= 500) break;
+    items = await searchResponsePromise;
+    await browser.close();
+  } catch(e) {
+    logger.error({ error: e }, "Puppeteer scraper failed");
+    scraperEvents.emit("progress", {
+      source: "ejn",
+      status: "error",
+      message: `[EJN SECURE] Greška pri pokretanju Puppeteer scrapera.`,
+    });
+    return 0;
   }
 
-  logger.info({ inserted, updated, logId }, "EJN insurance scraper finished");
+  if (items.length === 0) {
+    logger.info("Nije pronađen nijedan tender sa tom ključnom riječi.");
+    return 0;
+  }
+
+  const filteredItems = items.filter((item: any) => isRealInsuranceTender(item.name || "", ""));
+
+  logger.info({ count: filteredItems.length }, "EJN search items fetched after filtering");
+
+  for (const item of filteredItems) {
+    if (signal?.aborted) break;
+
+    const externalId = `EJN-SEARCH-${item.id}`;
+
+    const [existing] = await db
+      .select({ id: tendersTable.id })
+      .from(tendersTable)
+      .where(eq(tendersTable.externalId, externalId))
+      .limit(1);
+
+    if (existing) {
+      updated++;
+      continue;
+    }
+
+    const category = mapCategory(item.name, "");
+    const entity = mapEntity("", item.legalEntity);
+    const source = "EJN-Search";
+
+    let deadline = fallbackDeadline();
+    if (item.date) {
+      const parts = item.date.split('.');
+      if (parts.length >= 3) {
+        deadline = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+      }
+    }
+
+    let status = "open";
+    let statusName = "Aktivan";
+    if (item.announcementType && item.announcementType.toLowerCase().includes("dodjel")) {
+      status = "closed";
+      statusName = "Dodijeljen";
+    } else if (item.announcementType && item.announcementType.toLowerCase().includes("ponište")) {
+      status = "cancelled";
+      statusName = "Poništen";
+    }
+
+    const ejnLink = item.downloadUrl ? item.downloadUrl : `https://www.ejn.gov.ba/Announcement/Search`;
+    const tenderId = nanoid();
+
+    await db.insert(tendersTable).values({
+      id: tenderId,
+      externalId,
+      title: item.name || `Tender ${item.id}`,
+      contractingAuth: item.legalEntity || "N/A",
+      entity,
+      category,
+      source,
+      tenderType: "Usluge",
+      status,
+      statusName,
+      publicationDate: new Date(),
+      deadline,
+      questionsDeadline: null,
+      estimatedValue: null,
+      currency: "KM",
+      cpvCodes: [],
+      description: item.announcementType || null,
+      sourceUrl: ejnLink,
+      hasEAuction: item.isAuctionOnline ?? false,
+      awardCriteria: null,
+      awardCriteriaDetails: null,
+      guaranteeAmount: null,
+      guaranteeType: null,
+      tenderPreparationCost: null,
+    });
+
+    scraperEvents.emit("new_tender", {
+      tender: {
+        id: tenderId,
+        title: item.name || `Tender ${item.id}`,
+        contractingAuth: item.legalEntity || "N/A",
+        estimatedValue: null,
+        currency: "KM",
+        deadline: deadline.toISOString(),
+      },
+      isInsurance: true,
+    });
+
+    insertedIds.push(tenderId);
+    inserted++;
+  }
+
+  logger.info({ inserted, updated, logId }, "EJN Search scraper finished");
 
   if (inserted > 0) {
     await sendHighRelevanceNotifications(insertedIds);
@@ -454,7 +563,7 @@ export async function sendDeadlineReminders(): Promise<void> {
     .where(and(eq(tendersTable.status, "open"), gte(tendersTable.deadline, now)))
     .limit(50);
 
-  const comingSoon = expiringSoon.filter((t) => t.deadline <= threeDays);
+  const comingSoon = expiringSoon.filter((t: any) => t.deadline <= threeDays);
   if (comingSoon.length === 0) return;
 
   const allUsers = await db.select({ id: usersTable.id }).from(usersTable);

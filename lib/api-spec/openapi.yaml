@@ -129,6 +129,22 @@ paths:
           in: query
           schema:
             type: number
+        - name: minValue
+          in: query
+          schema:
+            type: number
+        - name: maxValue
+          in: query
+          schema:
+            type: number
+        - name: hasEAuction
+          in: query
+          schema:
+            type: boolean
+        - name: tenderType
+          in: query
+          schema:
+            type: string
         - name: sortBy
           in: query
           schema:
@@ -805,7 +821,7 @@ components:
           type: string
           format: date-time
         deadline:
-          type: string
+          type: ["string", "null"]
           format: date-time
         questionsDeadline:
           type: ["string", "null"]
@@ -906,7 +922,7 @@ components:
           type: string
           format: date-time
         deadline:
-          type: string
+          type: ["string", "null"]
           format: date-time
         questionsDeadline:
           type: ["string", "null"]
@@ -973,6 +989,10 @@ components:
     ParticipationConditions:
       type: object
       properties:
+        _analysis:
+          type: object
+          description: Provenance and limitations of the document review. Scores are unavailable unless explicitly marked available.
+          additionalProperties: true
         financial:
           type: ["string", "null"]
         technical:
@@ -1298,6 +1318,24 @@ components:
     ScraperSourceStatus:
       type: object
       properties:
+        supported:
+          type: boolean
+        tendersNew:
+          type: integer
+        tendersUpdated:
+          type: integer
+        lastError:
+          type: ["string", "null"]
+        warnings:
+          type: array
+          items:
+            type: string
+        hasMore:
+          type: boolean
+        schedule:
+          type: string
+        detail:
+          type: string
         source:
           type: string
         lastRun:

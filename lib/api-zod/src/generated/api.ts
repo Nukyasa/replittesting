@@ -68,6 +68,10 @@ export const ListTendersQueryParams = zod.object({
   "status": zod.coerce.string().optional(),
   "minScore": zod.coerce.number().optional(),
   "maxScore": zod.coerce.number().optional(),
+  "minValue": zod.coerce.number().optional(),
+  "maxValue": zod.coerce.number().optional(),
+  "hasEAuction": zod.coerce.boolean().optional(),
+  "tenderType": zod.coerce.string().optional(),
   "sortBy": zod.coerce.string().optional(),
   "sortOrder": zod.coerce.string().optional()
 })
@@ -85,7 +89,7 @@ export const ListTendersResponse = zod.object({
   "estimatedValue": zod.number().nullish(),
   "currency": zod.string(),
   "publicationDate": zod.coerce.date(),
-  "deadline": zod.coerce.date(),
+  "deadline": zod.coerce.date().nullable(),
   "questionsDeadline": zod.coerce.date().nullish(),
   "tenderType": zod.string(),
   "entity": zod.string(),
@@ -127,7 +131,7 @@ export const GetTenderResponse = zod.object({
   "estimatedValue": zod.number().nullish(),
   "currency": zod.string(),
   "publicationDate": zod.coerce.date(),
-  "deadline": zod.coerce.date(),
+  "deadline": zod.coerce.date().nullable(),
   "questionsDeadline": zod.coerce.date().nullish(),
   "tenderType": zod.string(),
   "entity": zod.string(),
@@ -163,6 +167,7 @@ export const GetTenderResponse = zod.object({
   "insuranceRelevance": zod.string(),
   "requiredDocs": zod.array(zod.string()),
   "participationConditions": zod.object({
+  "_analysis": zod.record(zod.string(), zod.unknown()).optional().describe('Provenance and limitations of the document review. Scores are unavailable unless explicitly marked available.'),
   "financial": zod.string().nullish(),
   "technical": zod.string().nullish(),
   "legal": zod.string().nullish(),
@@ -235,6 +240,7 @@ export const GetTenderAnalysisResponse = zod.object({
   "insuranceRelevance": zod.string(),
   "requiredDocs": zod.array(zod.string()),
   "participationConditions": zod.object({
+  "_analysis": zod.record(zod.string(), zod.unknown()).optional().describe('Provenance and limitations of the document review. Scores are unavailable unless explicitly marked available.'),
   "financial": zod.string().nullish(),
   "technical": zod.string().nullish(),
   "legal": zod.string().nullish(),
@@ -276,6 +282,7 @@ export const AnalyzeTenderResponse = zod.object({
   "insuranceRelevance": zod.string(),
   "requiredDocs": zod.array(zod.string()),
   "participationConditions": zod.object({
+  "_analysis": zod.record(zod.string(), zod.unknown()).optional().describe('Provenance and limitations of the document review. Scores are unavailable unless explicitly marked available.'),
   "financial": zod.string().nullish(),
   "technical": zod.string().nullish(),
   "legal": zod.string().nullish(),
@@ -508,7 +515,7 @@ export const GetAnalyticsExpiringResponseItem = zod.object({
   "estimatedValue": zod.number().nullish(),
   "currency": zod.string(),
   "publicationDate": zod.coerce.date(),
-  "deadline": zod.coerce.date(),
+  "deadline": zod.coerce.date().nullable(),
   "questionsDeadline": zod.coerce.date().nullish(),
   "tenderType": zod.string(),
   "entity": zod.string(),
@@ -532,6 +539,14 @@ export const GetAnalyticsExpiringResponse = zod.array(GetAnalyticsExpiringRespon
  */
 export const GetScraperStatusResponse = zod.object({
   "sources": zod.array(zod.object({
+  "supported": zod.boolean().optional(),
+  "tendersNew": zod.number().optional(),
+  "tendersUpdated": zod.number().optional(),
+  "lastError": zod.string().nullish(),
+  "warnings": zod.array(zod.string()).optional(),
+  "hasMore": zod.boolean().optional(),
+  "schedule": zod.string().optional(),
+  "detail": zod.string().optional(),
   "source": zod.string(),
   "lastRun": zod.coerce.date().nullish(),
   "nextRun": zod.coerce.date().nullish(),

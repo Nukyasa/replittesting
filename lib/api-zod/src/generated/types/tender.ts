@@ -20,7 +20,8 @@ export interface Tender {
   estimatedValue?: number | null;
   currency: string;
   publicationDate: Date;
-  deadline: Date;
+  /** @nullable */
+  deadline: Date | null;
   /** @nullable */
   questionsDeadline?: Date | null;
   tenderType: string;

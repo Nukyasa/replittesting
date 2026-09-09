@@ -4,7 +4,7 @@ import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
-const isDev = process.env.NODE_ENV === "development";
+const isDev = process.env.NODE_ENV !== "production";
 const JWT_SECRET = process.env.JWT_SECRET ?? (isDev ? "asa_tender_jwt_secret_2026" : null);
 
 if (!JWT_SECRET) {
@@ -28,10 +28,17 @@ declare global {
 
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
+  let token = "";
+  if (authHeader?.startsWith("Bearer ")) {
+    token = authHeader.slice(7);
+  } else if (req.query.token && typeof req.query.token === "string") {
+    token = req.query.token;
+  }
+
+  if (!token) {
     return res.status(401).json({ error: "Unauthorized" });
   }
-  const token = authHeader.slice(7);
+
   try {
     const payload = jwt.verify(token, JWT_SECRET!) as { userId: string; role: string };
     const [user] = await db
@@ -49,7 +56,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
     if (!user) return res.status(401).json({ error: "User not found" });
     req.user = user;
-    next();
+    return next();
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }
@@ -59,5 +66,5 @@ export function adminOnly(req: Request, res: Response, next: NextFunction) {
   if (req.user?.role !== "admin") {
     return res.status(403).json({ error: "Admin only" });
   }
-  next();
+  return next();
 }

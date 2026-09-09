@@ -1,0 +1,20 @@
+# Netlify configuration for deploying the SPA frontend at artifacts/tender-app.
+# IMPORTANT: the frontend uses relative API URLs like /api/auth/login.
+# Therefore we must proxy /api/* to an external backend host.
+
+# SPA routing: serve index.html for unknown routes
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200
+force = true
+
+# Proxy API calls to your backend.
+# Replace YOUR_BACKEND_HOST with a public HTTPS host that serves Express at:
+#   https://YOUR_BACKEND_HOST/api/*
+[[redirects]]
+from = "/api/*"
+to = "https://YOUR_BACKEND_HOST/api/:splat"
+status = 200
+force = true
+

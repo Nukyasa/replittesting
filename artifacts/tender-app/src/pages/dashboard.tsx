@@ -1,77 +1,70 @@
-import { useState } from "react";
-import { useListTenders, useGetAnalyticsSummary, useGetAnalyticsByCategory, useTriggerScraper } from "@workspace/api-client-react";
+import { useState, useEffect } from "react";
+import { useListTenders, useGetAnalyticsSummary, useGetAnalyticsByCategory, customFetch } from "@workspace/api-client-react";
 import { LiveFeed } from "@/components/LiveFeed";
+import { MyWorkday } from "@/components/TenderWorkspace";
+import { EjnSyncPanel } from "@/components/EjnSyncPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoney, formatDate, getScoreBadgeProps } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { RefreshCw, FileText, AlertTriangle, Target, Clock, BrainCircuit } from "lucide-react";
+import { FileText, AlertTriangle, Target, Clock, BrainCircuit, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 export default function Dashboard() {
-  const [syncing, setSyncing] = useState(false);
-  const queryClient = useQueryClient();
+
+  const [timeTick, setTimeTick] = useState(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimeTick(Date.now());
+    }, 60 * 60 * 1000); // refresh hourly
+    return () => clearInterval(interval);
+  }, []);
+
+  const { data: followedTenders, isLoading: loadingFollowed } = useQuery({
+    queryKey: ["kanbanBoard"],
+    queryFn: () => customFetch<any[]>("/api/tenders/kanban/board"),
+  });
+
+  const sortedTenders = [...(followedTenders || [])].sort((a, b) => {
+    const d1 = (a.deadline ? new Date(a.deadline).getTime() : Infinity);
+    const d2 = (b.deadline ? new Date(b.deadline).getTime() : Infinity);
+    const nowMs = Date.now();
+
+    const isPastA = d1 <= nowMs;
+    const isPastB = d2 <= nowMs;
+
+    if (isPastA && !isPastB) return 1;
+    if (!isPastA && isPastB) return -1;
+    return d1 - d2;
+  });
 
   const { data: summary, isLoading: loadingSummary } = useGetAnalyticsSummary();
-  const { data: tendersData, isLoading: loadingTenders } = useListTenders({ limit: 8, sortBy: "relevanceScore", sortOrder: "desc" });
+  const { data: tendersData, isLoading: loadingTenders } = useListTenders({ limit: 8, sortBy: "publicationDate", sortOrder: "desc" });
   const { data: catData, isLoading: loadingCat } = useGetAnalyticsByCategory();
-  const triggerScraper = useTriggerScraper();
 
   const chartData = catData?.map((c: { category?: string; count?: number }) => ({
     name: c.category || "Ostalo",
     count: c.count || 0,
   })).slice(0, 6) ?? [];
 
-  const handleSync = async () => {
-    setSyncing(true);
-    try {
-      await triggerScraper.mutateAsync({ data: { source: "ejn" } });
-      toast.success("Sinkronizacija pokrenuta — preuzimam podatke s EJN portala...");
-      setTimeout(() => {
-        queryClient.invalidateQueries();
-        setSyncing(false);
-      }, 5000);
-    } catch {
-      toast.error("Greška pri pokretanju sinkronizacije");
-      setSyncing(false);
-    }
-  };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">Pregled vaših tendera i AI analitike</p>
-        </div>
-        <div className="flex items-center gap-3 bg-white px-4 py-2 border rounded-md shadow-sm text-sm">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-            </span>
-            <span className="font-medium text-gray-700">EJN Sinkronizacija</span>
-          </div>
-          <div className="w-px h-4 bg-gray-300 mx-2"></div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 text-xs text-primary px-2"
-            onClick={handleSync}
-            disabled={syncing}
-          >
-            <RefreshCw className={`w-3 h-3 mr-1 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Sinkronizacija..." : "Sinkroniziraj EJN"}
-          </Button>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Radni pregled</h1>
+          <p className="text-gray-500 text-sm mt-1">Zaduženja tima, rokovi i pregled tendera</p>
         </div>
       </div>
 
+      <MyWorkday />
+      <EjnSyncPanel />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Aktivni tenderi" value={summary?.openTenders} icon={FileText} loading={loadingSummary} />
-        <StatCard title="AI Relevantni (>75)" value={summary?.highRelevance} icon={Target} loading={loadingSummary} />
+        <StatCard title="Novih danas" value={summary?.newToday} icon={Target} loading={loadingSummary} />
         <StatCard title="Rok u 7 dana" value={summary?.expiringIn7Days} icon={Clock} loading={loadingSummary} />
         <StatCard title="Na watchlisti" value={summary?.watchlistCount} icon={AlertTriangle} loading={loadingSummary} />
       </div>
@@ -82,7 +75,7 @@ export default function Dashboard() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <BrainCircuit className="w-5 h-5 text-primary" />
-                AI Dnevni pregled
+                Dnevni pregled podataka
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -97,15 +90,79 @@ export default function Dashboard() {
                   </p>
                 )}
                 <p className="text-gray-500 italic text-xs">
-                  Sistem automatski preuzima podatke s EJN portala (open.ejn.gov.ba). Koristite "Sinkroniziraj EJN" za ručno ažuriranje.
+                  Stanje i nastavak preuzimanja dostupni su u panelu EJN iznad.
                 </p>
               </div>
             </CardContent>
           </Card>
 
+          {/* Predaja ponuda — rokovi */}
+          <Card className="shadow-sm">
+            <CardHeader className="pb-3 border-b bg-gray-50/50">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Clock className="w-5 h-5 text-primary" />
+                Predaja ponuda — rokovi
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+              {loadingFollowed ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+                </div>
+              ) : !sortedTenders || sortedTenders.length === 0 ? (
+                <div className="text-center text-gray-400 py-6 text-sm">
+                  Nema tendera na praćenju. Dodajte tendere na praćenje da vidite odbrojavanje.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sortedTenders.map((t: any) => {
+                    const countdown = calculateCountdown(t.deadline, timeTick);
+                    return (
+                      <div 
+                        key={t.id} 
+                        className="p-3.5 border rounded-lg shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white"
+                      >
+                        <div className="space-y-1.5 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span 
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${countdown.colorClass}`}
+                            >
+                              {countdown.badgeText}
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-mono uppercase">
+                              {t.externalId?.substring(0, 8) || "N/A"}
+                            </span>
+                          </div>
+                          <h4 className="font-bold text-sm text-gray-900 truncate" title={t.title}>
+                            {t.title}
+                          </h4>
+                          <p className="text-xs text-gray-500 font-medium flex items-center gap-2">
+                            <span>Rok: {formatDeadlineDate(t.deadline)}</span>
+                            <span className="text-gray-300">|</span>
+                            <span className="font-bold text-primary">
+                              {t.estimatedValue ? `${t.estimatedValue.toLocaleString("bs-BA")} KM` : "Vrijednost nije navedena"}
+                            </span>
+                          </p>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="text-xs text-primary hover:bg-primary/5 font-semibold px-2.5 py-1 border shrink-0 self-start sm:self-center"
+                          onClick={() => window.location.href = `/tenders/${t.id}`}
+                        >
+                          Otvori tender →
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card className="shadow-sm">
             <CardHeader>
-              <CardTitle className="text-base">Tenderi visoke relevantnosti</CardTitle>
+              <CardTitle className="text-base">Posljednje objavljeni tenderi</CardTitle>
             </CardHeader>
             <CardContent>
               {loadingTenders ? (
@@ -127,7 +184,7 @@ export default function Dashboard() {
                       {tendersData?.tenders?.map(t => {
                         const scoreProps = getScoreBadgeProps(t.relevanceScore);
                         return (
-                          <tr key={t.id} className="border-b hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => window.location.href = `/tenders/${t.id}`}>
+                           <tr key={t.id} className="border-b hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => window.location.href = `/tenders/${t.id}`}>
                             <td className="p-3">
                               <div className="font-medium text-primary line-clamp-1">{t.title}</div>
                               <div className="text-xs text-gray-500 line-clamp-1">{t.contractingAuth} • {t.entity}</div>
@@ -199,15 +256,16 @@ export default function Dashboard() {
 
           <Card className="shadow-sm bg-primary/5 border-primary/20">
             <CardContent className="p-5 space-y-3">
-              <h3 className="font-semibold text-primary text-sm">EJN Integracija</h3>
+              <h3 className="font-bold text-primary text-sm flex items-center gap-1.5">
+                <ShieldCheck className="w-4.5 h-4.5 text-primary" />
+                EJN Portal Integracija
+              </h3>
               <p className="text-xs text-gray-600 leading-relaxed">
-                Sistem je integrisan s <strong>open.ejn.gov.ba</strong> OData API-jem. Filtriraju se isključivo <strong>insurance tenderi</strong> (CPV 665xx + ključne riječi).
+                Uvoz koristi javni EJN izvor. Dostupnost pune tenderske dokumentacije provjerava se zasebno za svaki tender.
               </p>
-              <div className="text-xs text-gray-500 space-y-1">
-                <div className="flex justify-between"><span>Izvor:</span><span className="font-medium">EJN BiH</span></div>
-                <div className="flex justify-between"><span>Endpoint:</span><span className="font-medium">Announcements</span></div>
-                <div className="flex justify-between"><span>Sinkronizacija:</span><span className="font-medium">Svakih 30 min</span></div>
-                <div className="flex justify-between"><span>Format:</span><span className="font-medium">OData / JSON</span></div>
+              <div className="text-xs text-gray-500 space-y-1 bg-white p-2.5 rounded border border-primary/10">
+                <div className="flex justify-between"><span>Portal:</span><span className="font-semibold text-gray-800">www.ejn.gov.ba</span></div>
+                <p>Javno obavještenje ne zamjenjuje punu dokumentaciju. Ako pristup nije dostupan, dodajte dokumente ručno u kartici Dokumenti.</p>
               </div>
             </CardContent>
           </Card>
@@ -239,4 +297,58 @@ function StatCard({ title, value, icon: Icon, loading }: { title: string; value?
       </CardContent>
     </Card>
   );
+}
+
+function calculateCountdown(deadlineStr: string | null, currentMs: number) {
+  if (!deadlineStr) return { badgeText: "Rok nije poznat", colorClass: "bg-gray-100 text-gray-600" };
+  const deadline = new Date(deadlineStr);
+  const now = new Date(currentMs);
+  const diffMs = deadline.getTime() - now.getTime();
+
+  if (diffMs <= 0) {
+    return {
+      badgeText: "⚫ Rok prošao (arhiva)",
+      colorClass: "bg-gray-100 text-gray-500 border-gray-200 font-normal",
+    };
+  }
+
+  const isToday = deadline.toDateString() === now.toDateString();
+
+  if (isToday) {
+    const hours = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60)));
+    const minutes = Math.max(0, Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60)));
+    return {
+      badgeText: `🔴 HITNO — još ${hours}h ${minutes}m`,
+      colorClass: "bg-red-50 text-red-700 border-red-200 animate-pulse font-extrabold",
+    };
+  }
+
+  const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  if (days <= 3) {
+    return {
+      badgeText: `🔴 HITNO — ${days} ${days === 1 ? 'dan' : 'dana'}`,
+      colorClass: "bg-red-50 text-red-700 border-red-200 font-extrabold",
+    };
+  } else if (days <= 7) {
+    return {
+      badgeText: `🟡 ${days} dana`,
+      colorClass: "bg-amber-50 text-amber-700 border-amber-200 font-bold",
+    };
+  } else {
+    return {
+      badgeText: `🟢 ${days} dana`,
+      colorClass: "bg-green-50 text-green-700 border-green-200 font-semibold",
+    };
+  }
+}
+
+function formatDeadlineDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${day}.${month}.${year}. u ${hours}:${minutes}`;
 }

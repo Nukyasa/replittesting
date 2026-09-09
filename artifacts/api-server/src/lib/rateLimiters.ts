@@ -1,8 +1,10 @@
 import rateLimit from "express-rate-limit";
 
+const isDev = process.env.NODE_ENV === "development";
+
 export const aiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
+  windowMs: isDev ? 1000 : 15 * 60 * 1000,
+  max: isDev ? 10000 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req, res, _next, options) => {

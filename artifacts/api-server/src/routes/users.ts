@@ -46,7 +46,7 @@ usersRouter.post("/", adminOnly, async (req, res) => {
     .returning();
 
   const { password: _p, ...safeUser } = user;
-  res.status(201).json(safeUser);
+  return res.status(201).json(safeUser);
 });
 
 usersRouter.patch("/:id", adminOnly, async (req, res) => {
@@ -59,16 +59,16 @@ usersRouter.patch("/:id", adminOnly, async (req, res) => {
   const [user] = await db
     .update(usersTable)
     .set(updates)
-    .where(eq(usersTable.id, req.params.id))
+    .where(eq(usersTable.id, req.params.id as string))
     .returning();
 
   if (!user) return res.status(404).json({ error: "User not found" });
   const { password: _p, ...safeUser } = user;
-  res.json(safeUser);
+  return res.json(safeUser);
 });
 
 usersRouter.delete("/:id", adminOnly, async (req, res) => {
-  await db.delete(usersTable).where(eq(usersTable.id, req.params.id));
+  await db.delete(usersTable).where(eq(usersTable.id, req.params.id as string));
   res.status(204).send();
 });
 

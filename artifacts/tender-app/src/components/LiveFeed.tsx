@@ -102,7 +102,7 @@ export function LiveFeed() {
           <div className="px-5 pb-5 text-center text-gray-400 text-sm py-6">
             <Radio className="w-6 h-6 mx-auto mb-2 opacity-30" />
             <p>Čekam nove insurance tendere...</p>
-            <p className="text-xs mt-1 text-gray-300">Novi tenderi se sinkroniziraju svakih 30 min</p>
+            <p className="text-xs mt-1 text-gray-300">Provjera novih tendera svakih 15 minuta dok server radi</p>
           </div>
         ) : (
           <div className="divide-y max-h-72 overflow-y-auto">

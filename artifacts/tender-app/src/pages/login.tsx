@@ -1,34 +1,50 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useAuthStore } from "@/hooks/use-auth";
-import { useLogin } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function LoginPage() {
   const [, setLocation] = useLocation();
   const { setAuth } = useAuthStore();
-  const { toast } = useToast();
-  const login = useLogin();
-  
+  const queryClient = useQueryClient();
+
   const [email, setEmail] = useState("admin@asacentral.ba");
   const [password, setPassword] = useState("Admin1234!");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    login.mutate({ data: { email, password } }, {
-      onSuccess: (data) => {
-        setAuth(data.token, data.user);
-        toast({ title: "Prijava uspješna", description: "Dobrodošli u ASA Tender Intelligence" });
-        setLocation("/dashboard");
-      },
-      onError: () => {
-        toast({ title: "Greška", description: "Pogrešan email ili lozinka", variant: "destructive" });
+    setError(null);
+    setLoading(true);
+
+    try {
+      const apiBase = (import.meta as any).env?.VITE_API_URL || "http://localhost:5000";
+      const res = await fetch(`${apiBase}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data?.error || "Pogrešan email ili lozinka.");
+        setLoading(false);
+        return;
       }
-    });
+
+      queryClient.clear();
+      setAuth(data.token, data.user);
+      setLocation("/dashboard");
+    } catch {
+      setError("Greška u komunikaciji sa serverom. Pokušajte ponovo.");
+      setLoading(false);
+    }
   };
 
   return (
@@ -49,31 +65,41 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">Email adresa</Label>
-                <Input 
-                  id="email" 
-                  type="email" 
+                <Input
+                  id="email"
+                  type="email"
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="ime.prezime@asacentral.ba" 
-                  required 
+                  onChange={e => { setEmail(e.target.value); setError(null); }}
+                  placeholder="ime.prezime@asacentral.ba"
+                  required
                   data-testid="input-email"
                 />
               </div>
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Lozinka</Label>
-                </div>
-                <Input 
-                  id="password" 
-                  type="password" 
+                <Label htmlFor="password">Lozinka</Label>
+                <Input
+                  id="password"
+                  type="password"
                   value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  required 
+                  onChange={e => { setPassword(e.target.value); setError(null); }}
+                  required
                   data-testid="input-password"
                 />
               </div>
-              <Button type="submit" className="w-full mt-6" disabled={login.isPending} data-testid="button-submit">
-                {login.isPending ? "Prijava u toku..." : "Prijavi se"}
+
+              {error && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                  ⚠️ {error}
+                </p>
+              )}
+
+              <Button
+                type="submit"
+                className="w-full mt-6"
+                disabled={loading}
+                data-testid="button-submit"
+              >
+                {loading ? "Prijava u toku..." : "Prijavi se"}
               </Button>
             </form>
           </CardContent>

@@ -3,13 +3,17 @@ import { logger } from "./lib/logger";
 import { seedDatabase } from "./seed";
 import cron from "node-cron";
 import { db } from "@workspace/db";
-import { scraperLogsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { scraperLogsTable, tendersTable, documentsTable, tenderNotificationsTable, userTendersTable } from "@workspace/db";
+import { eq, and, gte } from "drizzle-orm";
 import { nanoid } from "./lib/nanoid";
-import { runEjnScraper, syncActiveEjnTenders, sendDeadlineReminders } from "./services/ejnScraper";
+import { SyncTenders, isTenderSyncRunning } from "./services/tenderSync";
+import { syncActiveEjnTenders } from "./services/ejnScraper";
+import { sendDeadlineReminders } from "./services/tenderNotifications";
 import { scraperEvents } from "./lib/scraperEvents";
+import monitoringRouter from "./routes/monitoring";
+import { syncHistoryBatch } from "./services/awardHistory";
 
-const rawPort = process.env["PORT"];
+const rawPort = process.env["PORT"] ?? (process.env.NODE_ENV !== "production" ? "5000" : undefined);
 
 if (!rawPort) {
   throw new Error(
@@ -31,79 +35,71 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 
-  seedDatabase().catch((seedErr) => logger.error({ err: seedErr }, "Seed failed"));
+  // Odgodi seed i cron da server odmah bude dostupan.
+  const startDelayMs = Number(process.env.DB_START_DELAY_MS ?? "15000");
 
-  let cronRunning = false;
+  setTimeout(() => {
+    seedDatabase()
+      .catch((seedErr) => logger.error({ err: seedErr }, "Seed failed"));
+  }, startDelayMs);
 
-  cron.schedule("*/30 * * * *", async () => {
-    if (cronRunning) {
-      logger.info("Cron: EJN scraper already running, skipping");
-      return;
-    }
-    cronRunning = true;
-    logger.info("Cron: Starting scheduled EJN insurance scrape");
+  // Cron registrujemo tek nakon kratkog delay-a (i dalje se ne gasi funkcionalnost).
+  setTimeout(() => {
+    void syncHistoryBatch().catch(err => logger.error({ err }, "Initial history sync failed"));
+    cron.schedule("*/10 * * * *", () => { void syncHistoryBatch().catch(err => logger.error({ err }, "History sync failed")); });
+    cron.schedule("*/15 * * * *", async () => {
+      if (isTenderSyncRunning()) return;
+      try { await SyncTenders({ triggeredBy: "cron", maxPages: 1, processDocuments: false }); }
+      catch (err) { logger.error({ err }, "EJN scheduled sync failed"); }
+    });
 
-    const [log] = await db
-      .insert(scraperLogsTable)
-      .values({
-        id: nanoid(),
-        source: "ejn",
-        triggeredBy: "cron",
-        startedAt: new Date(),
-        status: "running",
-      })
-      .returning();
+    cron.schedule("0 8 * * *", async () => {
+      logger.info("Cron: Sending deadline reminders");
+      try {
+        await sendDeadlineReminders();
+      } catch (err) {
+        logger.error({ err }, "Cron: Deadline reminders failed");
+      }
+    });
 
-    try {
-      const newCount = await runEjnScraper(log.id);
+    cron.schedule("0 */2 * * *", async () => {
+      const { TenderPreparationPipeline } = await import("./services/tenderPipeline");
+      logger.info("Cron: Checking for tenders without AI analysis");
+      try {
+        const { eq, and, isNull } = await import("drizzle-orm");
+        const { aiAnalysisTable, tendersTable } = await import("@workspace/db");
+        
+        const unanalyzed = await db.select({ id: tendersTable.id, title: tendersTable.title })
+          .from(tendersTable)
+          .leftJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
+          .where(and(eq(tendersTable.status, "open"), isNull(aiAnalysisTable.id)))
+          .limit(10);
 
-      await db
-        .update(scraperLogsTable)
-        .set({
-          completedAt: new Date(),
-          status: "completed",
-          tendersFound: newCount,
-          tendersNew: newCount,
-          tendersUpdated: 0,
-        })
-        .where(eq(scraperLogsTable.id, log.id));
+        if (unanalyzed.length > 0) {
+          logger.info(`Pipeline: Processing ${unanalyzed.length} tenders without analysis`);
+          await TenderPreparationPipeline.runBatch(unanalyzed.map((t: any) => t.id), 3);
+        }
+      } catch (err) {
+        logger.error({ err }, "Cron: Pipeline automation failed");
+      }
+    });
 
-      scraperEvents.emit("progress", {
-        source: "ejn",
-        status: "completed",
-        message: `Cron: ${newCount} novih insurance tendera uvezeno`,
-        tendersNew: newCount,
-      });
+    cron.schedule("0 */6 * * *", async () => {
+      const { MonitoringService } = await import("./services/monitoringService");
+      logger.info("Cron: Running system health monitoring");
+      try {
+        const systemStats = await MonitoringService.getSystemStats();
+        if (systemStats.failedPipeline > 0 || systemStats.activeAlerts > 10) {
+          logger.warn({ health: systemStats }, "System health issues detected");
+        }
+      } catch (err) {
+        logger.error({ err }, "Cron: System health check failed");
+      }
+    });
 
-      logger.info({ newCount }, "Cron: EJN insurance scrape completed");
-    } catch (cronErr) {
-      logger.error({ err: cronErr }, "Cron: EJN scrape failed");
-      await db
-        .update(scraperLogsTable)
-        .set({ completedAt: new Date(), status: "failed", errors: String(cronErr) })
-        .where(eq(scraperLogsTable.id, log.id));
-    } finally {
-      cronRunning = false;
-    }
-  });
+    logger.info(
+      "Cron schedulers registered: EJN OpenAPI sync every 15min, deadlines daily at 8:00, doc scraper every 2h, pipeline every 2h, health every 6h",
+    );
+  }, startDelayMs);
 
-  cron.schedule("0 * * * *", async () => {
-    logger.info("Cron: Syncing active tenders for changes");
-    try {
-      await syncActiveEjnTenders();
-    } catch (err) {
-      logger.error({ err }, "Cron: Active tender sync failed");
-    }
-  });
-
-  cron.schedule("0 8 * * *", async () => {
-    logger.info("Cron: Sending deadline reminders");
-    try {
-      await sendDeadlineReminders();
-    } catch (err) {
-      logger.error({ err }, "Cron: Deadline reminders failed");
-    }
-  });
-
-  logger.info("Cron schedulers registered: EJN insurance every 30min, sync every 1h, deadlines daily at 8:00");
 });

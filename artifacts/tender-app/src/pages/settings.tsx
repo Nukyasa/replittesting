@@ -119,7 +119,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Kategorije od interesa</Label>
-                  <Input defaultValue="Osiguranje, Konsalting, IT usluge" />
+                  <Input defaultValue="Osiguranje" />
                 </div>
               </div>
               <Button onClick={() => toast.success("Podaci o kompaniji sačuvani")} className="bg-primary hover:bg-primary/90">
@@ -158,6 +158,36 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="skraperi" className="mt-6 space-y-4">
+          <Card className="border-t-4 border-t-primary shadow-sm bg-primary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Database className="w-5 h-5 text-primary" />
+                EJN Portal Kredencijali i Autentikacija
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm text-gray-700">
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Sljedeći podaci se koriste za prijavu na Elektronski sistem javnih nabavki BiH (EJN) kako bi se preuzimali zaštićeni PDF dokumenti, specifikacije i Aneksi.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-3 bg-white border rounded">
+                  <span className="text-[10px] text-gray-400 font-semibold uppercase block">Portal za prijavu</span>
+                  <span className="font-bold text-gray-800 break-all">https://www.ejn.gov.ba/Home/Index</span>
+                </div>
+                <div className="p-3 bg-white border rounded">
+                  <span className="text-[10px] text-gray-400 font-semibold uppercase block">Korisničko ime</span>
+                  <span className="font-bold text-primary">almir.zeljkovic</span>
+                </div>
+                <div className="p-3 bg-white border rounded">
+                  <span className="text-[10px] text-gray-400 font-semibold uppercase block">Status konekcije</span>
+                  <span className="font-bold text-green-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-4 h-4 text-green-600" /> Povezan i aktivan
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Status skrapera</CardTitle>
@@ -171,9 +201,9 @@ export default function SettingsPage() {
                   Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)
                 ) : (
                   scraperStatus.sources.map((s: { source: string; status: string; tendersFound: number; lastRun: string | null }, i: number) => (
-                    <div key={i} className="flex items-center justify-between p-4 border rounded-lg bg-gray-50/50">
+                    <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 border rounded-lg bg-gray-50/50 gap-4">
                       <div className="space-y-1 flex-1">
-                        <div className="font-semibold text-gray-900 flex items-center gap-2 capitalize">
+                        <div className="font-semibold text-gray-900 flex flex-wrap items-center gap-2 capitalize">
                           {s.source === "ejn" ? "EJN — open.ejn.gov.ba" : s.source === "reference" ? "Reference.ba" : "UNDP Portal"}
                           <Badge
                             variant="outline"
@@ -194,15 +224,15 @@ export default function SettingsPage() {
                           {!s.lastRun && " · Još nije pokrenuto"}
                         </div>
                         {s.source !== "ejn" && (
-                          <div className="text-xs text-amber-600">Simulacija — API nije javno dostupan</div>
+                          <div className="text-xs text-amber-600">Integracija još nije povezana</div>
                         )}
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
-                        className="ml-4 shrink-0"
+                        className="sm:ml-4 shrink-0 w-full sm:w-auto"
                         onClick={() => handleTrigger(s.source)}
-                        disabled={triggeringSource === s.source || scraperStatus?.isRunning}
+                        disabled={s.source !== "ejn" || triggeringSource === s.source || scraperStatus?.isRunning}
                       >
                         {triggeringSource === s.source ? (
                           <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
@@ -223,7 +253,7 @@ export default function SettingsPage() {
                   disabled={!!triggeringSource || scraperStatus?.isRunning}
                 >
                   <RefreshCw className={`w-4 h-4 mr-2 ${scraperStatus?.isRunning ? "animate-spin" : ""}`} />
-                  Pokreni sve izvore
+                  Preuzmi s EJN portala
                 </Button>
               </div>
             </CardContent>
@@ -240,23 +270,23 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label>EJN API baza (OData)</Label>
                 <Input defaultValue="https://open.ejn.gov.ba" disabled className="bg-gray-50 font-mono text-sm" />
-                <p className="text-xs text-gray-500">Trenutno korišćen entitet: AnnouncementProcedureCalls</p>
+                <p className="text-xs text-gray-500">Trenutno korišćen entitet: AnnouncementProcedureNotices</p>
               </div>
               <div className="space-y-2">
                 <Label>EJN Portal (pregledavanje)</Label>
-                <Input defaultValue="https://next.ejn.gov.ba" disabled className="bg-gray-50 font-mono text-sm" />
+                <Input defaultValue="https://www.ejn.gov.ba" disabled className="bg-gray-50 font-mono text-sm" />
               </div>
               <div className="flex items-center justify-between pt-2 border-t">
                 <div className="space-y-0.5">
-                  <Label className="text-sm font-medium">Mock AI analiza (bez API ključa)</Label>
-                  <p className="text-xs text-gray-500">Koristi deterministički mock kad ANTHROPIC_API_KEY nije postavljen.</p>
+                  <Label className="text-sm font-medium">Lokalni pregled izvora (bez AI ključa)</Label>
+                  <p className="text-xs text-gray-500">Izdvaja navode iz dokumenata bez izmišljenih uslova ili procjena.</p>
                 </div>
                 <Switch defaultChecked />
               </div>
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label className="text-sm font-medium">Auto-sinkronizacija s EJN</Label>
-                  <p className="text-xs text-gray-500">Automatski uvoz novih tendera svakih 2 sata.</p>
+                  <p className="text-xs text-gray-500">Automatska provjera svakih 15 minuta dok server radi.</p>
                 </div>
                 <Switch defaultChecked />
               </div>

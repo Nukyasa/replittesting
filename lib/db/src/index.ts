@@ -1,16 +1,281 @@
 import { drizzle } from "drizzle-orm/node-postgres";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import pg from "pg";
+import { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { sql } from "drizzle-orm";
+import { workspaceMigration } from "./workspaceMigration";
 
 const { Pool } = pg;
 
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
-  );
+const hasDatabaseUrl = process.env.DATABASE_URL && 
+  process.env.DATABASE_URL !== "" && 
+  !process.env.DATABASE_URL.includes("your_password_here") &&
+  !process.env.DATABASE_URL.startsWith("postgresql://...");
+
+let pool: any = null;
+let db: any = null;
+
+function findWorkspaceRoot(startPath: string): string | null {
+  let current = startPath;
+  while (current !== path.dirname(current)) {
+    if (fs.existsSync(path.join(current, "pnpm-workspace.yaml")) || fs.existsSync(path.join(current, "package.json"))) {
+      if (fs.existsSync(path.join(current, "pnpm-workspace.yaml"))) {
+        return current;
+      }
+    }
+    current = path.dirname(current);
+  }
+  return null;
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle(pool, { schema });
+if (hasDatabaseUrl) {
+  console.log("[DATABASE] Connecting to remote/local PostgreSQL database...");
+  pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  db = drizzle(pool, { schema });
+} else {
+  console.log("\n=========================================================");
+  console.log("[DATABASE] DATABASE_URL is not set or has placeholders.");
+  console.log("[DATABASE] SPINNING UP IN-MEMORY POSTGRESQL (PGLITE) DATABASE...");
+  console.log("=========================================================\n");
 
+  const dbPath = path.join(findWorkspaceRoot(process.cwd()) || process.cwd(), ".pglite-db");
+  const client = new PGlite(dbPath);
+  db = drizzlePglite(client, { schema });
+
+  // Read and execute schema migration to create tables
+  try {
+    let sqlPath = "";
+    
+    // 1. Try finding workspace root first
+    const wsRoot = findWorkspaceRoot(process.cwd());
+    if (wsRoot) {
+      const p = path.join(wsRoot, "lib/db/drizzle/0000_brave_the_liberteens.sql");
+      if (fs.existsSync(p)) {
+        sqlPath = p;
+      }
+    }
+    
+    // 2. Fallbacks
+    if (!sqlPath) {
+      const pathsToTry = [
+        path.join(process.cwd(), "../../lib/db/drizzle/0000_brave_the_liberteens.sql"),
+        path.join(process.cwd(), "../lib/db/drizzle/0000_brave_the_liberteens.sql"),
+        path.join(process.cwd(), "./lib/db/drizzle/0000_brave_the_liberteens.sql"),
+        path.join(process.cwd(), "./drizzle/0000_brave_the_liberteens.sql"),
+        typeof __dirname !== "undefined"
+          ? path.join(__dirname, "../drizzle/0000_brave_the_liberteens.sql")
+          : path.join(path.dirname(fileURLToPath(import.meta.url)), "../drizzle/0000_brave_the_liberteens.sql")
+      ];
+
+      for (const p of pathsToTry) {
+        if (fs.existsSync(p)) {
+          sqlPath = p;
+          break;
+        }
+      }
+    }
+
+    if (sqlPath) {
+      // Check if tables already exist to avoid WASM abort errors when running CREATE TABLE on existing relations
+      let tablesExist = false;
+      try {
+        const checkRes = await client.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'users' LIMIT 1;");
+        if (checkRes.rows && checkRes.rows.length > 0) {
+          tablesExist = true;
+        }
+      } catch (e) {
+        // Tables do not exist
+      }
+
+      if (tablesExist) {
+        console.log("[DATABASE] Database tables already initialized, skipping migration execution.");
+      } else {
+        console.log(`[DATABASE] Found schema migration at: ${sqlPath}. Executing migration...`);
+        const sqlContent = fs.readFileSync(sqlPath, "utf-8");
+        await client.exec(sqlContent);
+        
+        // Ensure the new historical_awards table is created
+        await client.exec(`
+          CREATE TABLE IF NOT EXISTS "historical_awards" (
+            "id" text PRIMARY KEY NOT NULL,
+            "tender_id" text,
+            "contracting_auth" text NOT NULL,
+            "procedure_name" text NOT NULL,
+            "winner_name" text NOT NULL,
+            "winning_bid_amount" double precision NOT NULL,
+            "currency" text DEFAULT 'KM' NOT NULL,
+            "award_date" timestamp NOT NULL,
+            "competitor_offers_count" integer,
+            "created_at" timestamp DEFAULT now() NOT NULL
+          );
+        `);
+        console.log("[DATABASE] In-memory PostgreSQL schema initialized successfully!");
+      }
+
+      // Ensure new columns and profile table exist for high-value features
+      await client.exec(`
+        ALTER TABLE "tenders" ALTER COLUMN "deadline" DROP NOT NULL;
+        UPDATE "tenders" SET "category" = 'Drugo', "updated_at" = now()
+          WHERE "source" IN ('ejn', 'ejn_openapi') AND "category" = 'Osiguranje'
+          AND "raw_data"->'announcement'->>'ContractType' IN ('Goods', 'Works');
+        ALTER TABLE "tenders" ADD COLUMN IF NOT EXISTS "win_probability_pct" double precision;
+        
+        CREATE TABLE IF NOT EXISTS "contracting_authority_profiles" (
+          "id" text PRIMARY KEY NOT NULL,
+          "ejn_id" text UNIQUE NOT NULL,
+          "name" text NOT NULL,
+          "level" text,
+          "municipality" text,
+          "vrsta" text,
+          "last_scraped_at" timestamp,
+          "last_updated" timestamp DEFAULT now() NOT NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS "historical_awards" (
+          "id" text PRIMARY KEY NOT NULL,
+          "tender_id" text,
+          "contracting_auth" text NOT NULL,
+          "procedure_name" text NOT NULL,
+          "winner_name" text NOT NULL,
+          "winning_bid_amount" double precision NOT NULL,
+          "currency" text DEFAULT 'KM' NOT NULL,
+          "award_date" timestamp NOT NULL,
+          "competitor_offers_count" integer,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS "tender_competitors" (
+          "id" text PRIMARY KEY NOT NULL,
+          "tender_id" text NOT NULL REFERENCES "tenders"("id") ON DELETE CASCADE,
+          "company_name" text NOT NULL,
+          "offered_price_km" double precision NOT NULL,
+          "is_winner" boolean DEFAULT false NOT NULL,
+          "rank" integer,
+          "status" text,
+          "rejection_reason" text,
+          "source_url" text,
+          "scraped_at" timestamp DEFAULT now() NOT NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS "tender_related" (
+          "id" text PRIMARY KEY NOT NULL,
+          "tender_id" text NOT NULL REFERENCES "tenders"("id") ON DELETE CASCADE,
+          "ejn_broj" text NOT NULL,
+          "type" text NOT NULL,
+          "title" text NOT NULL,
+          "date" timestamp NOT NULL,
+          "processed" boolean DEFAULT false NOT NULL,
+          "is_new" boolean DEFAULT true NOT NULL,
+          "detected_at" timestamp DEFAULT now() NOT NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS "tender_calculations" (
+          "id" text PRIMARY KEY NOT NULL,
+          "tender_id" text NOT NULL REFERENCES "tenders"("id") ON DELETE CASCADE,
+          "guarantee_amount" double precision,
+          "validity_days" integer,
+          "duration" text,
+          "subject" text,
+          "base_premium" double precision,
+          "created_at" timestamp DEFAULT now() NOT NULL,
+          "updated_at" timestamp DEFAULT now() NOT NULL,
+          CONSTRAINT "tender_calculations_tender_id_unique" UNIQUE("tender_id")
+        );
+
+        CREATE TABLE IF NOT EXISTS "tender_notifications" (
+          "id" text PRIMARY KEY NOT NULL,
+          "user_id" text NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+          "tender_id" text NOT NULL REFERENCES "tenders"("id") ON DELETE CASCADE,
+          "type" text NOT NULL,
+          "message" text NOT NULL,
+          "is_read" boolean DEFAULT false NOT NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS "tender_alerts" (
+          "id" text PRIMARY KEY NOT NULL,
+          "tender_id" text NOT NULL REFERENCES "tenders"("id") ON DELETE CASCADE,
+          "type" text NOT NULL,
+          "severity" text DEFAULT 'info' NOT NULL,
+          "message" text NOT NULL,
+          "details" jsonb,
+          "is_read" boolean DEFAULT false NOT NULL,
+          "is_resolved" boolean DEFAULT false NOT NULL,
+          "resolved_by" text REFERENCES "users"("id") ON DELETE SET NULL,
+          "resolved_at" timestamp,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS "tender_parsed_data" (
+          "id" text PRIMARY KEY NOT NULL,
+          "tender_id" text NOT NULL UNIQUE REFERENCES "tenders"("id") ON DELETE CASCADE,
+          "raw_json" jsonb DEFAULT '{}'::jsonb NOT NULL,
+          "parsing_status" text DEFAULT 'PENDING' NOT NULL,
+          "parsing_error" text,
+          "parsed_at" timestamp DEFAULT now() NOT NULL,
+          "updated_at" timestamp DEFAULT now() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS "pipeline_runs" (
+          "id" text PRIMARY KEY NOT NULL,
+          "tender_id" text REFERENCES "tenders"("id") ON DELETE CASCADE,
+          "batch_id" text,
+          "status" text DEFAULT 'running' NOT NULL,
+          "steps" jsonb DEFAULT '[]'::jsonb NOT NULL,
+          "errors" jsonb DEFAULT '[]'::jsonb NOT NULL,
+          "duration_ms" integer,
+          "triggered_by" text DEFAULT 'cron' NOT NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL,
+          "completed_at" timestamp
+        );
+
+        ALTER TABLE "contracting_authority_profiles" ADD COLUMN IF NOT EXISTS "vrsta" text;
+        ALTER TABLE "contracting_authority_profiles" ADD COLUMN IF NOT EXISTS "last_scraped_at" timestamp;
+
+        ALTER TABLE "historical_awards" ADD COLUMN IF NOT EXISTS "contracting_authority_id" text REFERENCES "contracting_authority_profiles"("id") ON DELETE CASCADE;
+        ALTER TABLE "historical_awards" ADD COLUMN IF NOT EXISTS "cpv_kod" text;
+        ALTER TABLE "historical_awards" ADD COLUMN IF NOT EXISTS "ejn_broj" text;
+        ALTER TABLE "historical_awards" ADD COLUMN IF NOT EXISTS "estimated_value" double precision;
+        ALTER TABLE "historical_awards" ADD COLUMN IF NOT EXISTS "discount_pct" double precision;
+
+        CREATE TABLE IF NOT EXISTS "urz_decisions" (
+          "id" text PRIMARY KEY NOT NULL,
+          "case_number" text UNIQUE NOT NULL,
+          "contracting_auth" text NOT NULL,
+          "procedure_name" text NOT NULL,
+          "appellant" text NOT NULL,
+          "outcome" text NOT NULL,
+          "outcome_label" text NOT NULL,
+          "legal_basis" text NOT NULL,
+          "sporni_uslov" text NOT NULL,
+          "summary" text NOT NULL,
+          "category" text DEFAULT 'Osiguranje' NOT NULL,
+          "decision_date" timestamp NOT NULL,
+          "ejn_broj" text,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        );
+      `);
+      console.log("[DATABASE] Applied custom high-value feature migrations!");
+    } else {
+      console.error("[DATABASE] Could not locate the SQL migration file. Tables were not created.");
+    }
+  } catch (err) {
+    console.error("[DATABASE] Failed to initialize in-memory database schema:", err);
+  }
+}
+
+await db.transaction(async (tx: any) => {
+  for (const statement of workspaceMigration.split(";").filter(part => part.trim())) {
+    await tx.execute(sql.raw(statement));
+  }
+});
+
+export { pool, db };
 export * from "./schema";

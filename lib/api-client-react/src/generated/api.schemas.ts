@@ -68,7 +68,8 @@ export interface Tender {
   estimatedValue?: number | null;
   currency: string;
   publicationDate: string;
-  deadline: string;
+  /** @nullable */
+  deadline: string | null;
   /** @nullable */
   questionsDeadline?: string | null;
   tenderType: string;
@@ -106,7 +107,14 @@ export interface RiskItem {
   severity: string;
 }
 
+/**
+ * Provenance and limitations of the document review. Scores are unavailable unless explicitly marked available.
+ */
+export type _ParticipationConditionsAnalysis = { [key: string]: unknown };
+
 export interface ParticipationConditions {
+  /** Provenance and limitations of the document review. Scores are unavailable unless explicitly marked available. */
+  _analysis?: _ParticipationConditionsAnalysis;
   /** @nullable */
   financial?: string | null;
   /** @nullable */
@@ -199,7 +207,8 @@ export interface TenderDetail {
   estimatedValue?: number | null;
   currency: string;
   publicationDate: string;
-  deadline: string;
+  /** @nullable */
+  deadline: string | null;
   /** @nullable */
   questionsDeadline?: string | null;
   tenderType: string;
@@ -282,6 +291,15 @@ export interface ScoreDistStat {
 }
 
 export interface ScraperSourceStatus {
+  supported?: boolean;
+  tendersNew?: number;
+  tendersUpdated?: number;
+  /** @nullable */
+  lastError?: string | null;
+  warnings?: string[];
+  hasMore?: boolean;
+  schedule?: string;
+  detail?: string;
   source: string;
   /** @nullable */
   lastRun?: string | null;
@@ -352,8 +370,13 @@ category?: string;
 status?: string;
 minScore?: number;
 maxScore?: number;
+minValue?: number;
+maxValue?: number;
+hasEAuction?: boolean;
+tenderType?: string;
 sortBy?: string;
 sortOrder?: string;
+scope?: string;
 };
 
 export type GetAnalyticsExpiringParams = {

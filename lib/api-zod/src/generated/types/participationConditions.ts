@@ -5,8 +5,11 @@
  * ASA Tender Intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { _ParticipationConditionsAnalysis } from './_participationConditionsAnalysis';
 
 export interface ParticipationConditions {
+  /** Provenance and limitations of the document review. Scores are unavailable unless explicitly marked available. */
+  _analysis?: _ParticipationConditionsAnalysis;
   /** @nullable */
   financial?: string | null;
   /** @nullable */

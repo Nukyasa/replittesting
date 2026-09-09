@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import jsPDF from "jspdf";
 import { useParams, Link } from "wouter";
+import { useAuthStore } from "@/hooks/use-auth";
 import {
   useGetTender, useAnalyzeTender, useChatWithTender,
   useListTenderNotes, useCreateTenderNote, useDeleteTenderNote,
   useWatchTender, useUnwatchTender,
   getGetTenderQueryKey, getListTenderNotesQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,14 +17,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { formatMoney, formatDate, getScoreBadgeProps, getDeadlineBadgeProps, getStatusBadgeProps } from "@/lib/format";
+import { formatMoney, formatDate, getScoreBadgeProps, getDeadlineBadgeProps, getStatusBadgeProps, translateTenderType, translateEntity, translateSource } from "@/lib/format";
 import {
   ArrowLeft, BrainCircuit, ExternalLink, FileText, CheckCircle2, AlertTriangle,
   Send, Trash2, Plus, Bookmark, BookmarkCheck, Loader2, MessageSquare, StickyNote,
   FileDown, Clock, ShieldCheck, Gavel, ListChecks, History, Zap, ChevronRight,
-  TrendingUp, Calendar,
+  TrendingUp, Calendar, Download, Bot, RefreshCw, X
 } from "lucide-react";
+import { format, formatDistanceToNow } from "date-fns";
+import { bs } from "date-fns/locale";
+import ReactMarkdown from 'react-markdown';
 import { toast } from "sonner";
+import { TenderDocuments } from "@/components/TenderDocuments";
+import { TenderWorkspace } from "@/components/TenderWorkspace";
+import { TenderHistory } from "@/components/TenderHistory";
+import { CompanyMatch } from "@/components/CompanyMatch";
+import { SenaDecisionCard } from "@/components/SenaDecisionCard";
+import { TenderChangesDiff } from "@/components/TenderChangesDiff";
 
 type TenderDetail = {
   id: string;
@@ -37,7 +47,7 @@ type TenderDetail = {
   estimatedValue?: number | null;
   currency: string;
   publicationDate: string;
-  deadline: string;
+  deadline: string | null;
   questionsDeadline?: string | null;
   tenderType: string;
   entity: string;
@@ -47,11 +57,37 @@ type TenderDetail = {
   hasEAuction: boolean;
   awardCriteria?: string | null;
   awardCriteriaDetails?: string | null;
+  award?: {
+    id: string;
+    tenderId?: string | null;
+    contractingAuth: string;
+    procedureName: string;
+    winnerName: string;
+    winningBidAmount: number;
+    currency: string;
+    awardDate: string;
+  } | null;
+  exactAward?: {
+    id: string;
+    tenderId?: string | null;
+    contractingAuth: string;
+    procedureName: string;
+    winnerName: string;
+    winningBidAmount: number;
+    currency: string;
+    awardDate: string;
+    competitorOffersCount?: number | null;
+  } | null;
   guaranteeAmount?: number | null;
   guaranteeType?: string | null;
   tenderPreparationCost?: number | null;
   relevanceScore?: number | null;
   createdAt: string;
+  rawData?: {
+    announcement?: Record<string, unknown>;
+    lots?: Record<string, unknown>[];
+    [key: string]: unknown;
+  } | null;
   aiAnalysis?: {
     id: string;
     summary: string;
@@ -69,6 +105,7 @@ type TenderDetail = {
     insuranceRelevance: string;
     requiredDocs: string[];
     participationConditions?: {
+      _analysis?: { status: string; provider: string; documentCount: number; readableDocumentCount: number; warnings: string[]; scoringAvailable: boolean; evidence?: { documentId: string; documentName: string; quote: string; kind: string }[] };
       financial?: string | null;
       technical?: string | null;
       legal?: string | null;
@@ -104,9 +141,186 @@ type TenderDetail = {
     changedAt: string;
     notified: boolean;
   }[];
+  winProbability?: any;
+  authorityProfile?: any;
+  historicalAwards?: any[];
 };
 
-function DeadlineCountdown({ date, label }: { date: string; label: string }) {
+function ValidatorPonude({ tender, notesList }: { tender: TenderDetail, notesList: any[] }) {
+  const [isValidating, setIsValidating] = useState(false);
+  const [results, setResults] = useState<{ id: string; name: string; status: "pending" | "pass" | "fail" | "warning"; message: string }[] | null>(null);
+
+  const runValidation = () => {
+    setIsValidating(true);
+    setResults(null);
+    
+    setTimeout(() => {
+      const newResults: any[] = [];
+      
+      // 1. Provjera roka
+      const deadline = new Date(tender.deadline || "invalid");
+      const now = new Date();
+      if (Number.isNaN(deadline.getTime())) {
+        newResults.push({ id: "1", name: "Rok za predaju", status: "warning", message: "Rok nije objavljen u preuzetim podacima. Provjerite EJN dokumentaciju." });
+      } else if (deadline.getTime() < now.getTime()) {
+        newResults.push({ id: "1", name: "Rok za predaju", status: "fail", message: "Rok za predaju ponude je istekao!" });
+      } else if (deadline.getTime() - now.getTime() < 24 * 60 * 60 * 1000) {
+        newResults.push({ id: "1", name: "Rok za predaju", status: "warning", message: "Rok ističe za manje od 24 sata." });
+      } else {
+        newResults.push({ id: "1", name: "Rok za predaju", status: "pass", message: "Validno - ima dovoljno vremena za predaju." });
+      }
+
+      // 2. Provjera izračuna cijene vs. Procijenjene vrijednosti
+      const savedCalc = notesList.find(n => n.content.includes("KONAČNA PONUDA") || n.content.match(/Premija:\s*[\d.,\s]+/i));
+      let isPriceOk = false;
+      if (savedCalc && tender.estimatedValue) {
+        const match = savedCalc.content.match(/(?:KONAČNA PONUDA|ponuda|Premija):\s*([\d.,\s]+)\s*KM/i);
+        if (match && match[1]) {
+          const price = parseFloat(match[1].replace(/[^\d,]/g, '').replace(',', '.'));
+          if (price > tender.estimatedValue) {
+            newResults.push({ id: "2", name: "Provjera Cijene", status: "warning", message: `Ponuda (${price} KM) prelazi procijenjenu vrijednost (${tender.estimatedValue} KM). Provjerite budžet i uslove konkretnog postupka.` });
+          } else {
+            newResults.push({ id: "2", name: "Provjera Cijene", status: "pass", message: `Ponuda (${price} KM) je unutar budžeta tendera.` });
+            isPriceOk = true;
+          }
+        } else {
+          newResults.push({ id: "2", name: "Provjera Cijene", status: "warning", message: "Nije pronađen jasan iznos ponude u bilješkama za poređenje." });
+        }
+      } else {
+        newResults.push({ id: "2", name: "Provjera Cijene", status: "warning", message: "Kalkulacija cijene nije zabilježena u bilješkama." });
+      }
+
+      // 3. Provjera izjava i priloga
+      newResults.push({ id: "3", name: "Dokumentacija (Izjave)", status: "warning", message: "Provjerite svaku izjavu, potpis, ovjeru i prilog prema originalnoj dokumentaciji. Generisani nacrt nije dokaz kompletnosti." });
+      
+      // 4. Garancija za ozbiljnost ponude
+      if (tender.guaranteeAmount && tender.guaranteeAmount > 0) {
+        newResults.push({ id: "4", name: "Bankarska garancija", status: "warning", message: `Obavezna garancija od ${tender.guaranteeAmount} KM. Provjerite da li je originalni dokument osiguran od banke.` });
+      } else {
+        newResults.push({ id: "4", name: "Bankarska garancija", status: "warning", message: "U preuzetim podacima nema potvrđenog iznosa garancije. Provjerite originalnu dokumentaciju." });
+      }
+
+      setResults(newResults);
+      setIsValidating(false);
+    }, 1500); // simulacija delay-a AI analize
+  };
+
+  return (
+    <Card className="border-l-4 border-l-blue-500 shadow-sm mb-6">
+      <CardContent className="p-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-blue-500" />
+              AI Validator Ponude
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Automatska provjera logičkih grešaka (rokovi, budžet, bankarska garancija) prije finalne predaje.
+            </p>
+          </div>
+          <Button onClick={runValidation} disabled={isValidating} className="bg-blue-600 hover:bg-blue-700 text-white">
+            {isValidating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Provjeravam...</> : <><ListChecks className="w-4 h-4 mr-2" /> Pokreni Provjeru</>}
+          </Button>
+        </div>
+
+        {results && (
+          <div className="space-y-3 mt-6">
+            {results.map(r => (
+              <div key={r.id} className={`flex items-start gap-3 p-3 rounded-lg border ${
+                r.status === "pass" ? "bg-green-50 border-green-200 text-green-800" :
+                r.status === "warning" ? "bg-amber-50 border-amber-200 text-amber-800" :
+                "bg-red-50 border-red-200 text-red-800"
+              }`}>
+                {r.status === "pass" && <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />}
+                {r.status === "warning" && <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />}
+                {r.status === "fail" && <X className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />}
+                <div>
+                  <h4 className="font-semibold text-sm">{r.name}</h4>
+                  <p className="text-xs mt-1">{r.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ChecklistaTab({ tender }: { tender: TenderDetail }) {
+  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const saved = localStorage.getItem(`checklist_${tender.id}`);
+    if (saved) {
+      try { setCheckedItems(JSON.parse(saved)); } catch (e) {}
+    }
+  }, [tender.id]);
+
+  const toggleItem = (item: string) => {
+    const next = { ...checkedItems, [item]: !checkedItems[item] };
+    setCheckedItems(next);
+    localStorage.setItem(`checklist_${tender.id}`, JSON.stringify(next));
+  };
+
+  const docs = tender.aiAnalysis?.requiredDocs || [];
+  const decls = tender.aiAnalysis?.requiredDeclarations || [];
+  const allItems = [...docs, ...decls].filter(Boolean);
+
+  if (allItems.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center text-gray-500">
+          <ListChecks className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+          <p>Nisu pronađeni eksplicitni zahtjevi za dokumentaciju u AI analizi ili analiza još nije izvršena.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const completed = allItems.filter(item => checkedItems[item]).length;
+  const progress = Math.round((completed / allItems.length) * 100);
+
+  return (
+    <Card className="border-t-4 border-t-amber-500 shadow-sm">
+      <CardContent className="p-6">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <ListChecks className="w-5 h-5 text-amber-600" />
+              Interaktivna Checklista Dokumentacije
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">Označite dokumente koje ste pripremili za predaju.</p>
+          </div>
+          <div className="text-right">
+            <div className="text-2xl font-black text-amber-600">{progress}%</div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider">Spremnost</div>
+          </div>
+        </div>
+        
+        <div className="w-full bg-gray-100 rounded-full h-2.5 mb-6 overflow-hidden">
+          <div className="bg-amber-500 h-2.5 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+        </div>
+
+        <div className="space-y-3">
+          {allItems.map((item, idx) => (
+            <div key={idx} className="flex items-start gap-3 p-3 rounded-lg border hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => toggleItem(item)}>
+              <div className="mt-0.5 shrink-0">
+                {checkedItems[item] ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <div className="w-5 h-5 rounded-full border-2 border-gray-300"></div>}
+              </div>
+              <div className={`text-sm leading-relaxed ${checkedItems[item] ? "text-gray-400 line-through" : "text-gray-800 font-medium"}`}>
+                {item}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeadlineCountdown({ date, label }: { date: string | null; label: string }) {
+  if (!date) return <div className="p-3 border rounded-lg text-sm text-amber-800">{label}: nije objavljen — provjerite dokumentaciju.</div>;
   const deadline = new Date(date);
   const now = new Date();
   const diffMs = deadline.getTime() - now.getTime();
@@ -156,6 +370,110 @@ function DeadlineCountdown({ date, label }: { date: string; label: string }) {
   );
 }
 
+function TimeMachine({ tender, history }: { tender: TenderDetail, history: any[] }) {
+  const [diffData, setDiffData] = useState<any>(null);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const findSimilar = () => {
+    setIsSearching(true);
+    setDiffData(null);
+
+    setTimeout(() => {
+      // Find history item with similar name or just the most recent one for this authority
+      if (!history || history.length === 0) {
+        setIsSearching(false);
+        return;
+      }
+
+      // Very simple fuzzy logic for MVP: prefer items with same words in procedureName
+      const tenderWords = tender.title.toLowerCase().split(' ').filter(w => w.length > 4);
+      let bestMatch = null;
+      let maxMatches = -1;
+
+      for (const h of history) {
+        if (!h.procedureName) continue;
+        const hWords = h.procedureName.toLowerCase().split(' ').filter((w: string) => w.length > 4);
+        const matches = hWords.filter((w: string) => tenderWords.includes(w)).length;
+        if (matches > maxMatches) {
+          maxMatches = matches;
+          bestMatch = h;
+        }
+      }
+
+      // If no good match, just take the first one (most recent)
+      if (!bestMatch || maxMatches === 0) {
+        bestMatch = history[0];
+      }
+
+      setDiffData(bestMatch);
+      setIsSearching(false);
+    }, 1000);
+  };
+
+  return (
+    <Card className="border-t-4 border-t-purple-500 shadow-sm mb-6 bg-gradient-to-br from-white to-purple-50">
+      <CardContent className="p-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <History className="w-5 h-5 text-purple-600" />
+              Vremeplov (Time-Machine)
+            </h3>
+            <p className="text-sm text-gray-600 mt-1">
+              Automatski pronađite prošlogodišnji ugovor za ovog organa i uporedite cijene.
+            </p>
+          </div>
+          <Button onClick={findSimilar} disabled={isSearching} className="bg-purple-600 hover:bg-purple-700 text-white">
+            {isSearching ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Tražim...</> : <><History className="w-4 h-4 mr-2" /> Pronađi sličan tender</>}
+          </Button>
+        </div>
+
+        {diffData && (
+          <div className="mt-6 border-t border-purple-200 pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white p-4 rounded-lg border border-purple-100 shadow-sm">
+                <div className="text-xs font-bold uppercase text-purple-500 mb-2">Prošlogodišnji (Sličan) Tender</div>
+                <div className="font-semibold text-gray-800 text-sm mb-3">{diffData.procedureName}</div>
+                <div className="flex justify-between items-center text-sm border-b pb-2 mb-2">
+                  <span className="text-gray-500">Pobjednik:</span>
+                  <span className="font-bold text-gray-900">{diffData.winnerName}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm border-b pb-2 mb-2">
+                  <span className="text-gray-500">Pobjednička cijena:</span>
+                  <span className="font-bold text-red-600">{diffData.winningBidAmount ? diffData.winningBidAmount.toLocaleString("bs-BA") : "Nepoznato"} {diffData.currency || "KM"}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-500">Broj ponuda:</span>
+                  <span className="font-bold text-gray-900">{diffData.competitorOffersCount || "N/A"}</span>
+                </div>
+              </div>
+
+              <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm relative">
+                <div className="text-xs font-bold uppercase text-blue-500 mb-2">Trenutni Tender (Ove Godine)</div>
+                <div className="font-semibold text-gray-800 text-sm mb-3">{tender.title}</div>
+                <div className="flex justify-between items-center text-sm border-b pb-2 mb-2">
+                  <span className="text-gray-500">Naš planirani ponuđač:</span>
+                  <span className="font-bold text-gray-900">ASA CENTRAL osiguranje</span>
+                </div>
+                <div className="flex justify-between items-center text-sm border-b pb-2 mb-2">
+                  <span className="text-gray-500">Procijenjena vrijednost:</span>
+                  <span className="font-bold text-blue-600">{tender.estimatedValue ? tender.estimatedValue.toLocaleString("bs-BA") : "Nepoznato"} {tender.currency || "KM"}</span>
+                </div>
+                
+                {diffData.winningBidAmount && tender.estimatedValue && (
+                  <div className="mt-4 bg-green-50 text-green-800 p-3 rounded border border-green-200 text-sm">
+                    <strong>AI Preporuka:</strong> Prošle godine tender je osvojen za <strong>{Math.round((diffData.winningBidAmount / tender.estimatedValue) * 100)}%</strong> ovogodišnje procijenjene vrijednosti. Razmislite o ponudi oko <strong>{diffData.winningBidAmount.toLocaleString("bs-BA")} KM</strong>.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function FieldLabel({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
@@ -189,6 +507,7 @@ function formatChangeValue(field: string, value: string | null | undefined): str
 }
 
 export default function TenderDetail() {
+  const { token } = useAuthStore();
   const params = useParams();
   const id = params.id!;
   const queryClient = useQueryClient();
@@ -198,6 +517,172 @@ export default function TenderDetail() {
   });
 
   const { data: notes, isLoading: notesLoading } = useListTenderNotes(id);
+
+  useEffect(() => {
+    if (id) {
+      try {
+        const saved = JSON.parse(localStorage.getItem("viewed-tenders") || "[]");
+        if (!saved.includes(id)) {
+          localStorage.setItem("viewed-tenders", JSON.stringify([...saved, id]));
+        }
+      } catch {}
+    }
+  }, [id]);
+
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleGenerateOffer = async () => {
+    try {
+      setIsGenerating(true);
+      const response = await fetch(`/api/tenders/${id}/generate-offer`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ tenderId: id })
+      });
+      if (!response.ok) throw new Error('Greška pri generaciji');
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Ponuda_${tender?.title || "tender"}_ASACentral.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success("Uspješno generisana ponuda!");
+    } catch (err: any) {
+      console.error('Generator greška:', err);
+      toast.error('Greška pri generaciji ponude: ' + err.message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const { data: rawInsights, isLoading: insightsLoading } = useQuery({
+    queryKey: ["competitor-insights", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/tenders/${id}/competitor-insights`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) throw new Error("Failed to fetch competitor insights");
+      return res.json() as Promise<{
+        matchFound: boolean;
+        sourceType: string;
+        targetAuthority: string;
+        avgWinningBid: number;
+        aiSummary?: string;
+        topCompetitor: string;
+        totalCompetitorOffers: number;
+        dataSource: string;
+        history: {
+          id: string;
+          procedureName: string;
+          winnerName: string;
+          winningBidAmount: number;
+          currency: string;
+          awardDate: string;
+          competitorOffersCount: number;
+        }[];
+      }>;
+    },
+    enabled: !!id && !!token
+  });
+
+  const insights: any = rawInsights || {};
+
+  const { data: competitors, isLoading: competitorsLoading } = useQuery({
+    queryKey: ["tender-competitors", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/tenders/${id}/competitors`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error("Failed to fetch competitors");
+      return res.json();
+    },
+    enabled: !!id && !!token
+  });
+
+  const { data: calcData } = useQuery({
+    queryKey: ["tender-calculation", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/tenders/${id}/calculation`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error("Failed to fetch calculation data");
+      return res.json();
+    },
+    enabled: !!id && !!token
+  });
+
+  const updateTenderStatus = useMutation({
+    mutationFn: async (newStatus: "INTERESTED" | "NOT_INTERESTED" | "SUBMITTED" | "DRAFT" | "PENDING") => {
+      const res = await fetch(`/api/tenders/${id}/status`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) throw new Error("Neuspješno ažuriranje statusa");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenders", id] });
+      toast.success("Status ažuriran");
+    },
+  });
+
+  const uploadDocs = useMutation({
+    mutationFn: async (files: FileList | File[]) => {
+      const formData = new FormData();
+      for (const file of Array.from(files)) {
+        formData.append("files", file);
+      }
+      const res = await fetch(`/api/tenders/${id}/documents/upload`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+        body: formData,
+      });
+      if (!res.ok) throw new Error("Neuspješan upload");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenders", id] });
+      toast.success("Dokumenti uspješno učitani!", { description: "Sada možete pokrenuti AI analizu."});
+    },
+    onError: () => {
+      toast.error("Greška prilikom uploada.");
+    }
+  });
+
+  const fetchRealDocs = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/tenders/${id}/fetch-real-docs`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}` 
+        }
+      });
+      if (!res.ok) throw new Error("Failed to fetch real docs");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/tenders/${id}`] });
+      toast.success("Uspješno preuzeto", { description: "Pravi PDF dokumenti i aneksi su preuzeti sa EJN-a." });
+    },
+    onError: () => {
+      toast.error("Greška", { description: "Nije moguće preuzeti dokumentaciju sa EJN." });
+    }
+  });
+
   const analyzeTender = useAnalyzeTender();
   const chatMutation = useChatWithTender();
   const createNote = useCreateTenderNote();
@@ -208,6 +693,79 @@ export default function TenderDetail() {
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [noteInput, setNoteInput] = useState("");
+  
+  // Tab control and declaration states
+  const [activeTab, setActiveTab] = useState<string>("pregled");
+
+  // Selektuj tab na osnovu query parametara (npr. ?tab=dokumenti)
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const tab = url.searchParams.get("tab");
+      if (tab && [
+        "pregled",
+        "rokovi",
+        "analiza",
+        "ai-analiza",
+        "uslovi",
+        "konkurencija",
+        "zjn-kontrolna",
+        "radni-dosje",
+        "historija-dodjela",
+        "parsirano",
+        "chat",
+        "biljeske",
+        "kalkulator",
+        "aneksi",
+        "dokumenti",
+        "historija",
+        "izmjene-td",
+      ].includes(tab)) {
+        setActiveTab(tab);
+      }
+    } catch {
+      // no-op
+    }
+  }, []);
+  const [activeDeclaration, setActiveDeclaration] = useState<{ title: string; content: string; type: string } | null>(null);
+  
+  // PDF Viewer states
+  const [activePdfUrl, setActivePdfUrl] = useState<{ url: string; name: string } | null>(null);
+  const [pdfMode, setPdfMode] = useState<"direct" | "google">("direct");
+
+  // Win Probability & CA History Modal states
+  const [showWinProbabilityModal, setShowWinProbabilityModal] = useState(false);
+  const [showCaHistoryModal, setShowCaHistoryModal] = useState(false);
+
+  // Tariff calculator states
+  const [calcType, setCalcType] = useState<"fleet" | "property">("fleet");
+  const [numVehicles, setNumVehicles] = useState<number>(30);
+  const [avgVehicleValue, setAvgVehicleValue] = useState<number>(45000);
+  const [kaskoRate, setKaskoRate] = useState<number>(2.4);
+  const [fixedAoPremium, setFixedAoPremium] = useState<number>(320);
+  const [fleetDiscount, setFleetDiscount] = useState<number>(10);
+
+  // Property state
+  const [propertyValue, setPropertyValue] = useState(1500000);
+  const [propertyRate, setPropertyRate] = useState(0.15);
+  const [liabilityRate, setLiabilityRate] = useState(0.05);
+  const [propertyDiscount, setPropertyDiscount] = useState(15);
+
+  // New states for Guarantee and Validity fetched from API
+  const [guaranteeAmount, setGuaranteeAmount] = useState(0);
+  const [deliveryDays, setDeliveryDays] = useState(0);
+
+  useEffect(() => {
+    if (calcData) {
+      if (calcData.guaranteeAmount) setGuaranteeAmount(calcData.guaranteeAmount);
+      if (calcData.deliveryDays) setDeliveryDays(calcData.deliveryDays);
+      if (calcData.estimatedValue) {
+        // Option: pre-fill propertyValue or avgVehicleValue based on estimatedValue
+        setPropertyValue(calcData.estimatedValue);
+      }
+    }
+  }, [calcData]);
+  
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -243,7 +801,13 @@ export default function TenderDetail() {
     try {
       await analyzeTender.mutateAsync({ id });
       await queryClient.invalidateQueries({ queryKey: getGetTenderQueryKey(id) });
-      toast.success("AI analiza završena");
+      await queryClient.invalidateQueries({ queryKey: ["competitor-insights", id] });
+      await queryClient.invalidateQueries({ queryKey: ["tender-competitors", id] });
+      await queryClient.invalidateQueries({ queryKey: ["tender-calculation", id] });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await queryClient.invalidateQueries({ queryKey: getGetTenderQueryKey(id) });
+      toast.success("Obrada izvora završena");
+      setTimeout(() => setActiveTab("analiza"), 300);
     } catch {
       toast.error("Greška pri pokretanju analize");
     }
@@ -264,6 +828,75 @@ export default function TenderDetail() {
     } catch {
       toast.error("Greška u AI chat komunikaciji");
       setChatMessages(prev => prev.slice(0, -1));
+    }
+  };
+
+  // Fleet Calculations
+  const rawKasko = numVehicles * avgVehicleValue * (kaskoRate / 100);
+  const rawAo = numVehicles * fixedAoPremium;
+  const totalRawFleet = rawKasko + rawAo;
+  const discountFleetAmount = totalRawFleet * (fleetDiscount / 100);
+  const netFleetPremium = totalRawFleet - discountFleetAmount;
+  const taxFleet = netFleetPremium * 0.05; // 5% porez
+  const finalFleetPremium = netFleetPremium + taxFleet;
+
+  // Property Calculations
+  const rawProp = propertyValue * (propertyRate / 100);
+  const rawLiab = propertyValue * (liabilityRate / 100);
+  const totalRawProp = rawProp + rawLiab;
+  const discountPropAmount = totalRawProp * (propertyDiscount / 100);
+  const netPropPremium = totalRawProp - discountPropAmount;
+  const taxProp = netPropPremium * 0.05; // 5% porez
+  const finalPropPremium = netPropPremium + taxProp;
+
+  const handleSaveCalculation = async () => {
+    let noteContent = "";
+    if (calcType === "fleet") {
+      noteContent = `🧮 KAKULACIJA OSIGURANJA FLOTE (ASA Central)\n` +
+        `• Broj vozila: ${numVehicles}\n` +
+        `• Prosječna vrijednost vozila: ${avgVehicleValue.toLocaleString("bs-BA")} KM\n` +
+        `• Kasko stopa: ${kaskoRate}%\n` +
+        `• Kasko premija (neto): ${rawKasko.toLocaleString("bs-BA")} KM\n` +
+        `• AO fiksna premija: ${fixedAoPremium} KM\n` +
+        `• AO premija (neto): ${rawAo.toLocaleString("bs-BA")} KM\n` +
+        `• Popust na flotu: ${fleetDiscount}%\n` +
+        `• Neto premija sa popustom: ${netFleetPremium.toLocaleString("bs-BA")} KM\n` +
+        `• Porez i fondovi (5%): ${taxFleet.toLocaleString("bs-BA")} KM\n` +
+        `=========================================\n` +
+        `➡️ KONAČNA PONUDA: ${finalFleetPremium.toLocaleString("bs-BA")} KM`;
+    } else {
+      noteContent = `🧮 KAKULACIJA OSIGURANJA IMOVINE (ASA Central)\n` +
+        `• Vrijednost imovine/objekata: ${propertyValue.toLocaleString("bs-BA")} KM\n` +
+        `• Stopa za imovinu (Požar/Šteta): ${propertyRate}%\n` +
+        `• Stopa za odgovornost: ${liabilityRate}%\n` +
+        `• Neto premija (neto): ${totalRawProp.toLocaleString("bs-BA")} KM\n` +
+        `• Popust: ${propertyDiscount}%\n` +
+        `• Neto premija sa popustom: ${netPropPremium.toLocaleString("bs-BA")} KM\n` +
+        `• Porez i fondovi (5%): ${taxProp.toLocaleString("bs-BA")} KM\n` +
+        `=========================================\n` +
+        `➡️ KONAČNA PONUDA: ${finalPropPremium.toLocaleString("bs-BA")} KM`;
+    }
+
+    try {
+      // Save to Notes
+      await createNote.mutateAsync({ id, data: { content: noteContent } });
+      await queryClient.invalidateQueries({ queryKey: getListTenderNotesQueryKey(id) });
+      
+      // Save to Calculation DB table
+      await fetch(`/api/tenders/${id}/calculation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          guaranteeAmount,
+          deliveryDays,
+          basePremium: calcType === "fleet" ? finalFleetPremium : finalPropPremium,
+          validityDays: 0
+        })
+      });
+
+      toast.success("Kalkulacija sačuvana u bilješke i bazu!");
+    } catch {
+      toast.error("Greška pri čuvanju kalkulacije");
     }
   };
 
@@ -306,11 +939,12 @@ export default function TenderDetail() {
     }
   };
 
-  const ejnLink = t.sourceUrl || (t.externalId?.startsWith("EJN-")
-    ? `https://next.ejn.gov.ba/bs-latn-ba/procurements/announcement/${t.externalId.replace("EJN-", "")}`
-    : null);
+  const rawData = t.rawData as any;
+  const announcementId = rawData?.announcement?.Id || rawData?.Id;
+  const ejnUrl = "https://www.ejn.gov.ba/Announcement/Search";
+  const ejnLink = "https://www.ejn.gov.ba/Announcement/Search";
 
-  const generatePDF = useCallback(() => {
+  const generatePDF = () => {
     const doc = new jsPDF("p", "mm", "a4");
     const pageWidth = 210;
     const margin = 20;
@@ -349,11 +983,11 @@ export default function TenderDetail() {
       ["Ugovorni organ:", t.contractingAuth || "-"],
       ["Entitet:", t.entity || "-"],
       ["Datum objave:", t.publicationDate ? new Date(t.publicationDate).toLocaleDateString("bs-BA") : "-"],
-      ["Rok za ponude:", t.deadline ? new Date(t.deadline).toLocaleDateString("bs-BA") : "-"],
+      ["Rok za ponude:", t.deadline ? formatDate(t.deadline) : "-"],
       ["Rok za pitanja:", t.questionsDeadline ? new Date(t.questionsDeadline).toLocaleDateString("bs-BA") : "N/A"],
       ["Procijenjena vrijednost:", t.estimatedValue ? `${new Intl.NumberFormat("bs-BA").format(t.estimatedValue)} ${t.currency || "KM"}` : "-"],
       ["CPV kod:", (t.cpvCodes || []).join(", ") || "-"],
-      ["Tip nabavke:", t.tenderType || "-"],
+      ["Tip nabavke:", translateTenderType(t.tenderType) || "-"],
       ["E-aukcija:", t.hasEAuction ? "Da" : "Ne"],
       ["Kriterij dodjele:", t.awardCriteria || "-"],
       ["Garancija:", t.guaranteeAmount ? `${new Intl.NumberFormat("bs-BA").format(t.guaranteeAmount)} ${t.currency || "KM"} (${t.guaranteeType || ""})` : "N/A"],
@@ -397,15 +1031,22 @@ export default function TenderDetail() {
     const safeName = (t.title || "tender").slice(0, 40).replace(/[^a-zA-Z0-9\s]/g, "").replace(/\s+/g, "-");
     doc.save(`${t.externalId || "tender"}-${safeName}.pdf`);
     toast.success("PDF preuzet");
-  }, [t]);
+  };
 
-  const analysis = t.aiAnalysis;
+  const metadata = t.aiAnalysis?.participationConditions?._analysis;
+  const analysis = metadata ? t.aiAnalysis : null;
   const changes = t.changes || [];
   const notesList = (notes as { id: string; content: string; createdAt: string | null }[] | undefined) || [];
 
   return (
     <div className="flex flex-col lg:flex-row gap-6">
       <div className="flex-1 space-y-6 min-w-0">
+        <section className="rounded-xl border bg-blue-50/50 p-4 space-y-2" aria-label="Status obrade">
+          <p className="font-semibold text-sm">{metadata?.status === "ai_review" ? "AI pregled na osnovu dokumenata" : metadata?.status === "document_review" ? "Pregled izdvojenog teksta" : "Potrebna obrada dokumentacije"}</p>
+          <p className="text-sm text-gray-600">{metadata ? metadata.readableDocumentCount + " dokumenata sa tekstom / " + metadata.documentCount + " datoteka u obradi." : "Za provjerljiv pregled uslova otvorite Dokumenti, preuzmite ili dodajte dokumentaciju i pokrenite obradu. Ranije procjene bez izvora nisu potvrđene."}</p>
+          {metadata?.warnings?.map((warning, i) => <p key={i} className="text-xs text-amber-800">{warning}</p>)}
+          {!!metadata?.evidence?.length && <details><summary className="text-sm text-primary cursor-pointer">Izvori izdvojenih zahtjeva ({metadata.evidence.length})</summary><div className="space-y-2 mt-3">{metadata.evidence.map((source, i) => <blockquote key={i} className="border-l-2 pl-3 text-xs"><p className="font-semibold">{source.documentName}</p><p>{source.quote}</p></blockquote>)}</div></details>}
+        </section>
         <div className="space-y-4">
           <Link href="/tenders">
             <Button variant="ghost" size="sm" className="-ml-2 text-gray-500">
@@ -413,8 +1054,8 @@ export default function TenderDetail() {
             </Button>
           </Link>
 
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-1 flex-1 min-w-0">
+          <div className="flex flex-col gap-5">
+            <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <Badge variant="outline" className="bg-white">{t.source}</Badge>
                 <Badge className={statusProps.className}>{t.statusName || statusProps.label}</Badge>
@@ -428,8 +1069,8 @@ export default function TenderDetail() {
                   <Badge className={scoreProps.className}>{scoreProps.label} ({t.relevanceScore})</Badge>
                 )}
               </div>
-              <h1 className="text-xl font-bold text-gray-900 leading-tight">{t.title}</h1>
-              <p className="text-gray-600 font-medium">{t.contractingAuth} · {t.entity}</p>
+              <h1 className="text-2xl font-bold text-gray-900 leading-tight">{t.title}</h1>
+              <p className="text-gray-600 font-medium text-base">{t.contractingAuth} · {t.entity}</p>
             </div>
 
             <div className="flex gap-2 flex-wrap">
@@ -445,11 +1086,27 @@ export default function TenderDetail() {
                 )}
               </Button>
               <Button variant="outline" onClick={generatePDF}>
-                <FileDown className="w-4 h-4 mr-2" /> PDF
+                <FileDown className="w-4 h-4 mr-2" /> PDF Sažetak
               </Button>
+              <Button 
+                className="bg-emerald-600 text-white hover:bg-emerald-700 shadow-md font-bold px-6"
+                onClick={() => handleGenerateOffer()}
+                disabled={isGenerating}
+              >
+                {isGenerating ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generisanje...</>
+                ) : (
+                  <><FileText className="w-4 h-4 mr-2" /> Nacrt ponude (.docx)</>
+                )}
+              </Button>
+              <a href={`/api/tenders/${t.id}/pdf?token=${token}`} target="_blank" rel="noopener noreferrer">
+                <Button variant="outline">
+                  <ExternalLink className="w-4 h-4 mr-2" /> Originalni PDF
+                </Button>
+              </a>
               {ejnLink && (
                 <a href={ejnLink} target="_blank" rel="noreferrer">
-                  <Button className="bg-primary hover:bg-primary/90">
+                  <Button variant="outline" className="border-primary/20 text-primary hover:bg-primary/5">
                     EJN Portal <ExternalLink className="w-4 h-4 ml-2" />
                   </Button>
                 </a>
@@ -458,36 +1115,129 @@ export default function TenderDetail() {
           </div>
         </div>
 
-        <Tabs defaultValue="pregled" className="w-full">
+        {/* Timeline Visualizer */}
+        {(() => {
+          const pubDate = t.publicationDate ? new Date(t.publicationDate).getTime() : 0;
+          const dlDate = t.deadline ? new Date(t.deadline || "invalid").getTime() : 0;
+          const now = Date.now();
+          let progressPercent = 0;
+          let timelineColor = "bg-green-500";
+          let timelineLabel = "Otvoreno za prijave";
+          if (pubDate && dlDate && dlDate > pubDate) {
+            const totalDuration = dlDate - pubDate;
+            const elapsed = now - pubDate;
+            progressPercent = Math.max(0, Math.min(100, (elapsed / totalDuration) * 100));
+            if (now > dlDate) {
+              timelineColor = "bg-red-500";
+              timelineLabel = "Rok istekao / Završeno";
+            } else if (progressPercent > 85) {
+              timelineColor = "bg-amber-500";
+              timelineLabel = "Rok uskoro ističe!";
+            }
+          } else if (!dlDate) {
+            timelineColor = "bg-gray-300";
+            timelineLabel = "Rok nije objavljen — potrebna provjera";
+          } else if (now > dlDate) {
+            progressPercent = 100;
+            timelineColor = "bg-red-500";
+            timelineLabel = "Završeno";
+          }
+          return (
+            <Card className="border-gray-200 shadow-sm border-t-2 border-t-primary mt-2 mb-4">
+              <CardContent className="p-4">
+                <div className="flex justify-between text-xs font-semibold mb-2 text-gray-600">
+                  <div className="flex items-center gap-1"><Calendar className="w-4 h-4 text-gray-400" /> Objavljeno: {t.publicationDate ? new Date(t.publicationDate).toLocaleDateString("bs-BA") : "-"}</div>
+                  <div className={`font-bold uppercase tracking-wider ${now > dlDate ? "text-red-600" : "text-primary"}`}>{timelineLabel}</div>
+                  <div className="flex items-center gap-1"><Clock className={`w-4 h-4 ${now > dlDate ? "text-red-400" : "text-amber-500"}`} /> Rok: {t.deadline ? formatDate(t.deadline) : "-"}</div>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden shadow-inner">
+                  <div className={`h-3 rounded-full ${timelineColor} transition-all duration-1000 ease-out`} style={{ width: `${progressPercent}%` }}></div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+        {/* SENA INTELLIGENCE & DECISION ENGINE */}
+        <SenaDecisionCard tenderId={t.id} currentDecision={t.userTender?.status} tender={t} />
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="bg-white border w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 p-1">
-            <TabsTrigger value="pregled">Pregled</TabsTrigger>
-            <TabsTrigger value="rokovi">
-              <Clock className="w-3.5 h-3.5 mr-1" /> Rokovi
-            </TabsTrigger>
-            <TabsTrigger value="ai-analiza" className="text-primary font-medium">
-              <BrainCircuit className="w-3.5 h-3.5 mr-1.5" /> AI Analiza
-            </TabsTrigger>
-            <TabsTrigger value="uslovi">
-              <ListChecks className="w-3.5 h-3.5 mr-1" /> Uslovi &amp; Izjave
-            </TabsTrigger>
-            <TabsTrigger value="chat">
-              <MessageSquare className="w-3.5 h-3.5 mr-1.5" /> AI Chat
-            </TabsTrigger>
-            <TabsTrigger value="biljeske">
-              <StickyNote className="w-3.5 h-3.5 mr-1.5" /> Bilješke ({notesList.length})
-            </TabsTrigger>
-            <TabsTrigger value="dokumenti">
-              <FileDown className="w-3.5 h-3.5 mr-1.5" /> Dokumenti ({t.documents?.length ?? 0})
-            </TabsTrigger>
-            {changes.length > 0 && (
-              <TabsTrigger value="historija">
-                <History className="w-3.5 h-3.5 mr-1.5" /> Historija ({changes.length})
-              </TabsTrigger>
-            )}
+            <TabsTrigger value="radni-dosje">Odluka i zadaci</TabsTrigger>
+            <TabsTrigger value="izmjene-td" className="text-amber-700 font-semibold bg-amber-50/50">🔔 Izmjene TD & Pitanja</TabsTrigger>
+            <TabsTrigger value="historija-dodjela">Prethodni dobitnici</TabsTrigger>
+            <TabsTrigger value="podudarnost-firme">Podudarnost firme</TabsTrigger>
+            <TabsTrigger value="pregled">📋 Pregled</TabsTrigger>
+            <TabsTrigger value="rokovi">⏱ Rokovi</TabsTrigger>
+            <TabsTrigger value="lotovi">▦ Lotovi i CPV</TabsTrigger>
+            <TabsTrigger value="dokumenti">📄 Dokumenti</TabsTrigger>
+            <TabsTrigger value="zjn-kontrolna">🤖 Priprema ponude</TabsTrigger>
+            <TabsTrigger value="analiza">📊 Analiza</TabsTrigger>
+            <TabsTrigger value="parsirano">🔍 Parsirano</TabsTrigger>
+            <TabsTrigger value="biljeske">💬 Bilješke</TabsTrigger>
           </TabsList>
 
           {/* PREGLED TAB */}
+          <TabsContent value="radni-dosje" className="mt-6"><TenderWorkspace tenderId={t.id} /></TabsContent>
+          <TabsContent value="izmjene-td" className="mt-6"><TenderChangesDiff tenderId={t.id} tenderTitle={t.title} deadline={t.deadline} /></TabsContent>
+          <TabsContent value="historija-dodjela" className="mt-6"><TenderHistory tenderId={t.id} /></TabsContent>
+          <TabsContent value="podudarnost-firme" className="mt-6"><CompanyMatch tenderId={t.id} /></TabsContent>
           <TabsContent value="pregled" className="mt-6 space-y-6">
+            {t.award && (
+              <Card className="border-l-4 border-l-green-500 bg-green-50/10 shadow-sm border border-gray-200">
+                <CardHeader className="pb-2 border-b bg-green-50/30">
+                  <CardTitle className="text-sm font-bold text-green-800 flex items-center gap-1.5">
+                    <Gavel className="w-4 h-4 text-green-600" /> Podaci o dodjeli ugovora (Završen postupak)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <FieldLabel label="Ugovor dodijeljen (Pobjednik)" value={t.award.winnerName} />
+                  <FieldLabel label="Vrijednost ugovora" value={formatMoney(t.award.winningBidAmount, t.award.currency || "KM")} />
+                  <FieldLabel label="Datum dodjele" value={formatDate(t.award.awardDate)} />
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Tenderska dokumentacija - izvučeni podaci */}
+            {(() => {
+              const raw = t.rawData as any;
+              const notice = raw?.announcement || raw;
+              if (!notice) return null;
+              const tdItems: { label: string; value: string }[] = [];
+              if (notice?.EconomicAbility) tdItems.push({ label: "Ekonomska i finansijska sposobnost", value: notice.EconomicAbility });
+              if (notice?.TechnicalAbility) tdItems.push({ label: "Tehnička i profesionalna sposobnost", value: notice.TechnicalAbility });
+              if (notice?.ProfessionalActivity) tdItems.push({ label: "Profesionalna djelatnost", value: notice.ProfessionalActivity });
+              if (notice?.ParticipationRestrictions) tdItems.push({ label: "Uslovi za učešće / Ograničenja", value: notice.ParticipationRestrictions });
+              if (notice?.PaymentRequirements) tdItems.push({ label: "Uslovi plaćanja", value: notice.PaymentRequirements });
+              if (notice?.AdditionalInformation) tdItems.push({ label: "Dodatne informacije", value: notice.AdditionalInformation });
+              if (notice?.SpecialConditionsText) tdItems.push({ label: "Posebni uslovi", value: notice.SpecialConditionsText });
+              if (notice?.DocumentationTakeOverDeadlineDate) tdItems.push({ label: "Rok za preuzimanje TD", value: formatDate(notice.DocumentationTakeOverDeadlineDate) });
+              if (notice?.DocumentationTakeOverContactPerson) tdItems.push({ label: "Kontakt za TD", value: `${notice.DocumentationTakeOverContactPerson}${notice.DocumentationTakeOverEmailAddress ? ` (${notice.DocumentationTakeOverEmailAddress})` : ""}${notice.DocumentationTakeOverPhoneNumber ? ` - ${notice.DocumentationTakeOverPhoneNumber}` : ""}` });
+              if (notice?.DocumentationTakeOverAddress) tdItems.push({ label: "Adresa za preuzimanje TD", value: `${notice.DocumentationTakeOverAddress}, ${notice.DocumentationTakeOverCityName || ""}` });
+              if (notice?.BidOpeningAddress) tdItems.push({ label: "Adresa za otvaranje ponuda", value: notice.BidOpeningAddress });
+              if (notice?.BidOpeningDateTime) tdItems.push({ label: "Datum otvaranja ponuda", value: formatDate(notice.BidOpeningDateTime) });
+              if (notice?.OfferDeliveryAddress) tdItems.push({ label: "Adresa za dostavu ponuda", value: `${notice.OfferDeliveryAddress}, ${notice.OfferDeliveryCityName || ""}` });
+              if (notice?.HasTenderDocumentationFee && notice?.TenderDocumentationFee) tdItems.push({ label: "Naknada za TD", value: `${notice.TenderDocumentationFee} KM` });
+              if (tdItems.length === 0) return null;
+              return (
+                <Card className="border-l-4 border-l-blue-500 bg-blue-50/5 shadow-sm border border-gray-200">
+                  <CardHeader className="pb-2 border-b bg-blue-50/30">
+                    <CardTitle className="text-sm font-bold text-blue-800 flex items-center gap-1.5">
+                      <ListChecks className="w-4 h-4 text-blue-600" /> Tenderska dokumentacija (EJN podaci)
+                    </CardTitle>
+                    <p className="text-xs text-blue-600 mt-1">Ovi podaci su izvučeni iz EJN portala. AI Chat ima pristup ovim informacijama.</p>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-3">
+                    {tdItems.map((item, i) => (
+                      <div key={i} className="border-b border-gray-100 pb-2 last:border-0 last:pb-0">
+                        <div className="text-xs text-gray-400 font-medium uppercase tracking-wider mb-1">{item.label}</div>
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{item.value}</p>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              );
+            })()}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Card>
                 <CardHeader className="pb-2 border-b">
@@ -495,9 +1245,9 @@ export default function TenderDetail() {
                 </CardHeader>
                 <CardContent className="p-4 grid grid-cols-2 gap-4">
                   <FieldLabel label="Ugovorni organ" value={t.contractingAuth} />
-                  <FieldLabel label="Entitet" value={t.entity} />
+                  <FieldLabel label="Entitet" value={translateEntity(t.entity)} />
                   <FieldLabel label="Datum objave" value={formatDate(t.publicationDate)} />
-                  <FieldLabel label="Tip nabavke" value={t.tenderType} />
+                  <FieldLabel label="Tip nabavke" value={translateTenderType(t.tenderType)} />
                   <FieldLabel label="Kategorija" value={t.category} />
                   <FieldLabel label="Status" value={t.statusName || statusProps.label} />
                   {t.cpvCodes && t.cpvCodes.length > 0 && (
@@ -584,6 +1334,19 @@ export default function TenderDetail() {
                 </CardContent>
               </Card>
             )}
+
+            <Card><CardHeader><CardTitle className="text-base">Dokumentacija za pripremu</CardTitle></CardHeader><CardContent className="space-y-3">
+              <p className="text-sm text-gray-600">{t.documents.filter(doc => doc.fileType !== "EJN_PORTAL_LINK" && (doc.localPath || (doc.fileSize ?? 0) > 0)).length} preuzetih datoteka. Poveznice na portal nisu preuzeti dokumenti.</p>
+              <p className="text-sm text-gray-600">Javno obavještenje i puna tenderska dokumentacija provjeravaju se odvojeno. U kartici Dokumenti vidite dostupnost teksta, preuzimate priloge i pokrećete obradu.</p>
+              <Button onClick={() => setActiveTab("dokumenti")}><FileText className="w-4 h-4 mr-2" />Otvori dokumentaciju i obradu</Button>
+            </CardContent></Card>
+          </TabsContent>
+
+          <TabsContent value="lotovi" className="mt-6 space-y-4">
+            <Card><CardHeader className="pb-2 border-b"><CardTitle className="text-base">Lotovi i CPV klasifikacija</CardTitle><p className="text-xs text-muted-foreground">Podaci su preuzeti iz službenog EJN OData odgovora za ovaj postupak.</p></CardHeader><CardContent className="p-4 space-y-4">
+              <div><p className="text-xs text-muted-foreground uppercase mb-2">Glavni CPV kodovi postupka</p>{t.cpvCodes?.length ? <div className="flex flex-wrap gap-2">{t.cpvCodes.map(code => <Badge key={code} variant="outline" className="font-mono">{code}</Badge>)}</div> : <p className="text-sm text-muted-foreground">CPV kod nije objavljen u trenutno učitanim lotovima.</p>}</div>
+              {Array.isArray(t.rawData?.lots) && t.rawData.lots.length ? <div className="space-y-3">{t.rawData.lots.map((lot: any, index: number) => { const lotDeadline = lot.ProcurementPhaseOfferSubmissionDeadline ?? lot.IntermediatePhaseOfferSubmissionDeadline ?? lot.ApplicationDeadlineDateTime; const lotCpv = lot.CPVCode ?? lot.CpvCode; return <div key={String(lot.Id ?? index)} className="rounded-lg border p-4"><div className="flex flex-wrap justify-between gap-3"><div><p className="font-semibold text-sm">Lot {lot.LotNumber ?? lot.Number ?? index + 1}{lot.ShortDescription ? ` — ${lot.ShortDescription}` : ""}</p><p className="text-xs text-muted-foreground mt-1">EJN lot ID: {lot.Id ?? "nije objavljen"}</p></div><div className="text-right"><p className="text-sm font-semibold">{lot.EstimatedValue != null ? formatMoney(Number(lot.EstimatedValue), t.currency) : "Vrijednost nije objavljena"}</p><p className="text-xs text-muted-foreground">rok: {lotDeadline ? formatDate(String(lotDeadline)) : "nije objavljen"}</p></div></div><div className="flex flex-wrap gap-2 mt-3">{lotCpv && <Badge variant="outline" className="font-mono">CPV {String(lotCpv)}</Badge>}{lot.IsAuctionOnline === true && <Badge variant="secondary">E-aukcija</Badge>}{lot.HasComplaint === true && <Badge variant="destructive">Evidentirana žalba</Badge>}</div></div>; })}</div> : <p className="text-sm text-muted-foreground">Lotovi nisu dostupni u trenutno preuzetom EJN odgovoru. Osvježite tender iz EJN-a prije donošenja odluke.</p>}
+            </CardContent></Card>
           </TabsContent>
 
           {/* ROKOVI TAB */}
@@ -600,6 +1363,8 @@ export default function TenderDetail() {
                   <DeadlineCountdown date={t.questionsDeadline} label="Rok za postavljanje pitanja" />
                 )}
                 <DeadlineCountdown date={t.deadline} label="Rok za prijem ponuda" />
+                
+                <p className="text-xs text-amber-800 border rounded-lg p-3">Rok za žalbu nije potvrđen u preuzetim podacima. Zatražite provjeru pravnog tima prema konkretnom postupku i dokumentaciji.</p>
               </CardContent>
             </Card>
 
@@ -634,7 +1399,7 @@ export default function TenderDetail() {
           </TabsContent>
 
           {/* AI ANALIZA TAB */}
-          <TabsContent value="ai-analiza" className="mt-6">
+          <TabsContent value="analiza" className="mt-6">
             {analysis ? (
               <div className="space-y-6">
                 <Card className="border-t-4 border-t-primary bg-primary/5 border-primary/20">
@@ -644,22 +1409,22 @@ export default function TenderDetail() {
                         <BrainCircuit className="w-5 h-5" /> AI Izvršni sažetak
                       </h3>
                       <div className="text-right shrink-0">
-                        <div className="text-2xl font-bold text-primary">{Math.round(analysis.relevanceScore)}</div>
+                        <div className="text-2xl font-bold text-primary">{metadata?.scoringAvailable ? Math.round(analysis.relevanceScore) : "Nije procijenjeno"}</div>
                         <div className="text-xs text-gray-400">/ 100</div>
                       </div>
                     </div>
-                    <Progress value={analysis.relevanceScore} className="h-2 mb-4" />
+                    {metadata?.scoringAvailable && <Progress value={analysis.relevanceScore} className="h-2 mb-4" />}
                     <p className="text-gray-800 leading-relaxed text-sm">{analysis.summary}</p>
                     <div className="mt-4 pt-4 border-t border-primary/20 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
                       <div>
                         <span className="text-gray-400">Vjerovatnoća uspjeha</span>
-                        <div className="font-bold text-primary">{analysis.successProbability}%</div>
+                        <div className="font-bold text-primary">{metadata?.scoringAvailable ? `${analysis.successProbability}%` : "Nije procijenjeno"}</div>
                       </div>
                       <div>
                         <span className="text-gray-400">Konkurencija</span>
                         <div className="font-bold text-gray-700 capitalize">{
                           analysis.competitionLevel === "high" ? "Visoka" :
-                          analysis.competitionLevel === "medium" ? "Srednja" : "Niska"
+                          analysis.competitionLevel === "medium" ? "Srednja" : analysis.competitionLevel === "low" ? "Niska" : "Nije procijenjeno"
                         }</div>
                       </div>
                       {analysis.estimatedPrepTime && (
@@ -822,6 +1587,48 @@ export default function TenderDetail() {
             )}
           </TabsContent>
 
+          {/* PARSIRANO TAB */}
+          <TabsContent value="parsirano" className="mt-6 space-y-4">
+            <Card>
+              <CardHeader className="pb-3 border-b">
+                <CardTitle className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-primary" /> Parsirani tekst tenderskih dokumenata
+                </CardTitle>
+                <p className="text-xs text-gray-500 mt-1">Ovdje možete pregledati tekstualni sadržaj koji je AI ekstraktovao iz učitanih dokumenata.</p>
+              </CardHeader>
+              <CardContent className="p-6">
+                {t.documents && t.documents.length > 0 ? (
+                  <div className="space-y-6">
+                    {t.documents.map((doc) => (
+                      <div key={doc.id} className="border rounded-lg overflow-hidden bg-white shadow-sm">
+                        <div className="bg-gray-50 border-b px-4 py-3 flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-blue-600" />
+                            <span className="font-semibold text-sm text-gray-900">{doc.name}</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs">{doc.fileType}</Badge>
+                        </div>
+                        <div className="p-4 bg-gray-50 max-h-[400px] overflow-y-auto font-mono text-xs leading-relaxed text-gray-700 whitespace-pre-wrap">
+                          {doc.parsedText ? (
+                            doc.parsedText
+                          ) : (
+                            <div className="text-center py-8 text-gray-400 italic">
+                              Tekst nije dostupan ili dokument još nije parsiran.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-gray-400 italic">
+                    Nema učitanih dokumenata za ovaj tender. Idite na tab "Dokumenti" da ih dodate ili preuzmete.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           {/* USLOVI & IZJAVE TAB */}
           <TabsContent value="uslovi" className="mt-6 space-y-6">
             {analysis?.participationConditions ? (
@@ -932,6 +1739,203 @@ export default function TenderDetail() {
             )}
           </TabsContent>
 
+          {/* KONKURENCIJA TAB */}
+          <TabsContent value="ugovorni-organ" className="mt-6 space-y-6">
+            {insightsLoading ? (
+              <div className="space-y-4">
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-64 w-full" />
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Ugovor Dodijeljen Card (if available) */}
+                {insights.exactAward && (
+                  <Card className="border-t-4 border-t-amber-500 shadow-xl bg-gradient-to-br from-amber-50 to-white overflow-hidden relative transform transition-all hover:scale-[1.01]">
+                    <div className="absolute -right-4 -top-4 opacity-10 pointer-events-none">
+                      <Gavel className="w-64 h-64 text-amber-500" />
+                    </div>
+                    <CardContent className="p-8 relative z-10">
+                      <div className="flex flex-col md:flex-row items-center gap-6 text-center md:text-left">
+                        <div className="w-24 h-24 bg-amber-100 rounded-full flex items-center justify-center shrink-0 shadow-inner ring-4 ring-white">
+                          <Gavel className="w-12 h-12 text-amber-600" />
+                        </div>
+                        <div className="flex-1">
+                          <Badge className="bg-amber-100 text-amber-800 border-amber-200 mb-3 px-3 py-1 uppercase tracking-widest text-xs font-black shadow-sm">
+                            Ugovor Dodijeljen (Tačan Pobjednik)
+                          </Badge>
+                          <h2 className="text-3xl font-black text-gray-900 mb-3 tracking-tight">
+                            Pobjednik: <span className="text-amber-600 drop-shadow-sm">{insights.exactAward.winnerName}</span>
+                          </h2>
+                          <div className="flex flex-wrap justify-center md:justify-start gap-x-8 gap-y-3 text-sm text-gray-700 font-semibold bg-white/60 p-3 rounded-lg inline-flex">
+                            <div className="flex items-center gap-2">
+                              <Zap className="w-5 h-5 text-amber-500" />
+                              <span>Vrijednost ugovora: <span className="text-gray-900 text-base">{insights.exactAward.winningBidAmount.toLocaleString("bs-BA")} {insights.exactAward.currency || "KM"}</span></span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-5 h-5 text-amber-500" />
+                              <span>Datum dodjele: <span className="text-gray-900 text-base">{new Date(insights.exactAward.awardDate).toLocaleDateString("bs-BA")}</span></span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 shadow-sm">
+                    <CardContent className="p-5 flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider block">Prosječna pobjednička ponuda</span>
+                        <span className="text-2xl font-black text-blue-900 mt-2 block">
+                          {insights.history?.length > 0 
+                            ? `${insights.avgWinningBid.toLocaleString("bs-BA")} KM` 
+                            : "N/A"}
+                        </span>
+                        <span className="text-xs text-blue-600 mt-1 block">{insights.history?.length > 0 ? `Na osnovu ${insights.history.length} istorijskih podataka` : "Nema tender-specifičnih podataka"}</span>
+                      </div>
+                      <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 shrink-0 shadow-inner">
+                        <TrendingUp className="w-6 h-6" />
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="bg-gradient-to-br from-amber-50 to-orange-50 border-amber-100 shadow-sm">
+                    <CardContent className="p-5 flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider block">Najveći konkurent</span>
+                        <span className="text-2xl font-black text-amber-900 mt-2 block truncate max-w-[200px]" title={insights.topCompetitor}>
+                          {insights.topCompetitor || "N/A"}
+                        </span>
+                        <span className="text-xs text-amber-600 mt-1 block">Najveći broj pobjeda u kategoriji</span>
+                      </div>
+                      <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 shrink-0 shadow-inner">
+                        <Gavel className="w-6 h-6" />
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-100 shadow-sm">
+                    <CardContent className="p-5 flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider block">Prosječan broj ponuda</span>
+                        <span className="text-2xl font-black text-emerald-900 mt-2 block">
+                          {insights.history?.length > 0 ? insights.totalCompetitorOffers.toFixed(1) : "N/A"}
+                        </span>
+                        <span className="text-xs text-emerald-600 mt-1 block">Ponuda po tenderu prosječno</span>
+                      </div>
+                      <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shrink-0 shadow-inner">
+                        <Plus className="w-6 h-6" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+                {/* AI Competition Summary */}
+                {insights.aiSummary && (
+                  <Card className="shadow-sm border-emerald-100 bg-emerald-50/30">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2">
+                        <Bot className="w-5 h-5 text-emerald-600" />
+                        <CardTitle className="text-sm text-emerald-800 font-bold">AI Strateška Analiza Konkurencije</CardTitle>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-gray-700 leading-relaxed font-medium">
+                        {insights.aiSummary}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Historical Awards Table */}
+                <Card className="shadow-sm">
+                  <CardHeader className="pb-3 border-b flex flex-row items-center justify-between bg-gray-50/50">
+                    <div>
+                      <CardTitle className="text-base text-primary font-bold">Istorijske dodjele ugovora za osiguranja</CardTitle>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {insights.matchFound 
+                          ? `Pronađene dodjele za ugovorni organ: ${insights.targetAuthority}`
+                          : "Prikazuju se opšte dodjele ugovora za osiguranja u bazi"}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <Badge 
+                        variant={insights.sourceType === "real-ejn" ? "default" : "outline"} 
+                        className={
+                          insights.sourceType === "real-ejn" ? "bg-green-600 text-white" : 
+                          insights.sourceType === "tender" ? "bg-blue-600 text-white" :
+                          insights.sourceType === "authority" ? "bg-purple-600 text-white" :
+                          insights.sourceType === "market" ? "bg-amber-600 text-white" :
+                          "bg-gray-400 text-white"
+                        }
+                        title={insights.dataSource}
+                      >
+                        {insights.sourceType === "real-ejn" ? "🔗 Real EJN podaci" : 
+                         insights.sourceType === "tender" ? "📌 Tender podaci" :
+                         insights.sourceType === "authority" ? "🏛️ Ugovorni organ" :
+                         insights.sourceType === "market" ? "📊 Tržišni pregled" :
+                         "⚠️ Nema podataka"}
+                      </Badge>
+                      <Badge variant={insights.matchFound ? "default" : "outline"} className={insights.matchFound ? "bg-blue-600 text-white" : ""}>
+                        {insights.matchFound ? "Pronađeni podaci" : "Nema poklapanja"}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    {insights.history && insights.history.length > 0 ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="border-b bg-gray-50 text-gray-400 font-bold uppercase tracking-wider">
+                              <th className="p-3">Ugovorni organ</th>
+                              <th className="p-3">Naziv postupka</th>
+                              <th className="p-3">Pobjednik</th>
+                              <th className="p-3 text-right">Vrijednost</th>
+                              <th className="p-3 text-center">Broj ponuda</th>
+                              <th className="p-3 text-right">Datum dodjele</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y text-gray-700">
+                            {insights.history.map((h: any) => ( h.id ? (
+                              <tr key={h.id} className="hover:bg-gray-50 transition-colors">
+                                <td className="p-3 font-semibold text-gray-900 max-w-[200px] truncate" title={h.contractingAuth}>{h.contractingAuth}</td>
+                                <td className="p-3 max-w-[250px] truncate" title={h.procedureName}>{h.procedureName}</td>
+                                <td className="p-3">
+                                  <Badge variant="outline" className="font-semibold text-primary bg-primary/5 border-primary/20">
+                                    {h.winnerName}
+                                  </Badge>
+                                </td>
+                                <td className="p-3 text-right font-bold text-gray-900">{h.winningBidAmount.toLocaleString("bs-BA")} {h.currency || "KM"}</td>
+                                <td className="p-3 text-center font-semibold">{h.competitorOffersCount || 3}</td>
+                                <td className="p-3 text-right text-gray-500">{new Date(h.awardDate).toLocaleDateString("bs-BA")}</td>
+                              </tr>
+                            ) : null))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="p-8 text-center text-gray-400 italic">
+                        Nema istorijskih podataka o pobjednicima u bazi podataka.
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="zjn-kontrolna" className="mt-6 space-y-4">
+            <Card><CardHeader><CardTitle>Priprema ponude — radna lista</CardTitle></CardHeader><CardContent className="space-y-4">
+              <p className="text-sm text-gray-600">Lista pomaže timu u pripremi. Svaki zahtjev, rok, potpis i ovjeru provjerite u izvornim dokumentima prije predaje.</p>
+              <DeadlineCountdown date={t.deadline} label="Rok za prijem ponuda" />
+              <div className="border rounded-lg p-4"><h3 className="font-semibold text-sm mb-2">Navodi o prilozima iz dokumentacije</h3>
+                {analysis?.requiredDocs?.length ? <ul className="list-disc pl-5 space-y-2 text-sm">{analysis.requiredDocs.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="text-sm text-amber-800">Obavezni prilozi nisu potvrđeni. Preuzmite dokumentaciju i pokrenite obradu.</p>}
+              </div>
+              <div className="border rounded-lg p-4"><h3 className="font-semibold text-sm mb-2">Koraci za tim</h3><ol className="list-decimal pl-5 space-y-2 text-sm text-gray-700"><li>Provjeriti cjelovitost dokumentacije, lotove i posljednje izmjene na portalu.</li><li>Potvrditi uslove učešća, obrasce i potrebne dokaze.</li><li>Pripremiti i interno odobriti kalkulaciju i nacrt ponude.</li><li>Provjeriti potpisnika, potpise, ovjere, garancije i način dostave.</li><li>Zabilježiti zaduženja i otvorena pitanja u bilješke; ažurirati status u Kanbanu.</li></ol></div>
+              <p className="text-xs text-gray-500">Generisani Word dokumenti su nacrti s poljima za dopunu. Ne predstavljaju potvrdu ispunjenosti uslova niti spremnosti za predaju.</p>
+            </CardContent></Card>
+          </TabsContent>
           {/* AI CHAT TAB */}
           <TabsContent value="chat" className="mt-6">
             <Card className="flex flex-col h-[500px]">
@@ -950,13 +1954,18 @@ export default function TenderDetail() {
                   </div>
                 ) : (
                   chatMessages.map((msg, i) => (
-                    <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                      <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
-                        msg.role === "user"
-                          ? "bg-primary text-white"
-                          : "bg-gray-100 text-gray-800"
-                      }`}>
-                        {msg.content}
+                    <div key={i} className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                      <div className={`flex flex-col gap-1 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                        <span className="text-[10px] font-medium text-gray-400 px-1 uppercase tracking-wider">
+                          {msg.role === "user" ? "Vi" : "ASA AI Asistent"}
+                        </span>
+                        <div className={`rounded-2xl px-5 py-3 text-sm shadow-sm whitespace-pre-wrap leading-relaxed ${
+                          msg.role === "user"
+                            ? "bg-primary text-white rounded-br-sm prose prose-invert max-w-none"
+                            : "bg-white border border-gray-100 text-gray-800 rounded-bl-sm prose max-w-none"
+                        }`}>
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -970,6 +1979,19 @@ export default function TenderDetail() {
                 )}
                 <div ref={chatEndRef} />
               </CardContent>
+              <div className="px-4 pb-2">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline" className="cursor-pointer hover:bg-primary hover:text-white bg-gray-50 border-gray-200 text-gray-600 transition-colors py-1.5 px-3 rounded-full font-medium" onClick={() => setChatInput("Generiši draft pitanja Ugovornom organu za pojašnjenje tenderske dokumentacije.")}>
+                    📝 Generiši draft pitanja
+                  </Badge>
+                  <Badge variant="outline" className="cursor-pointer hover:bg-primary hover:text-white bg-gray-50 border-gray-200 text-gray-600 transition-colors py-1.5 px-3 rounded-full font-medium" onClick={() => setChatInput("Koji su najstrožiji uslovi i najveći rizici za učešće u ovom tenderu?")}>
+                    ⚠️ Najveći rizici
+                  </Badge>
+                  <Badge variant="outline" className="cursor-pointer hover:bg-primary hover:text-white bg-gray-50 border-gray-200 text-gray-600 transition-colors py-1.5 px-3 rounded-full font-medium" onClick={() => setChatInput("Sumiraj samo uslove vezane za finansijsku sposobnost i garancije.")}>
+                    🔍 Finansijski uslovi
+                  </Badge>
+                </div>
+              </div>
               <div className="p-4 border-t flex gap-2">
                 <Input
                   placeholder="Postavite pitanje o tenderu..."
@@ -1049,45 +2071,12 @@ export default function TenderDetail() {
 
           {/* DOKUMENTI TAB */}
           <TabsContent value="dokumenti" className="mt-6">
-            {t.documents && t.documents.length > 0 ? (
-              <div className="space-y-3">
-                {t.documents.map((doc) => {
-                  const isAnnex = doc.name.toLowerCase().includes("annex") || doc.fileType === "ANNEX_I";
-                  return (
-                    <Card key={doc.id} className={isAnnex ? "border-primary/30 bg-primary/5" : ""}>
-                      <CardContent className="p-4 flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded flex items-center justify-center shrink-0 ${isAnnex ? "bg-primary/20" : "bg-gray-100"}`}>
-                          <FileText className={`w-5 h-5 ${isAnnex ? "text-primary" : "text-gray-400"}`} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className={`font-medium text-sm truncate ${isAnnex ? "text-primary" : "text-gray-900"}`}>{doc.name}</p>
-                          <p className="text-xs text-gray-500">{doc.fileType}{isAnnex ? " — ANNEX I" : ""}</p>
-                        </div>
-                        {doc.originalUrl && (
-                          <a href={doc.originalUrl} target="_blank" rel="noreferrer">
-                            <Button variant="outline" size="sm">
-                              <FileDown className="w-4 h-4 mr-1.5" /> Preuzmi
-                            </Button>
-                          </a>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="p-12 text-center bg-white border rounded-md text-gray-400">
-                <FileText className="w-10 h-10 mx-auto mb-3 text-gray-200" />
-                <p className="text-sm">Nema priloženih dokumenata za ovaj tender.</p>
-                {ejnLink && (
-                  <a href={ejnLink} target="_blank" rel="noreferrer" className="inline-block mt-3">
-                    <Button variant="outline" size="sm">
-                      <ExternalLink className="w-4 h-4 mr-1.5" /> Pogledajte dokumentaciju na EJN portalu
-                    </Button>
-                  </a>
-                )}
-              </div>
-            )}
+            <TenderDocuments tenderId={id} dbDeadline={t.deadline} ejnBroj={t.externalId} />
+          </TabsContent>
+
+          {/* CHECKLISTA TAB */}
+          <TabsContent value="checklista" className="mt-6">
+            <ChecklistaTab tender={t} />
           </TabsContent>
 
           {/* HISTORIJA IZMJENA TAB */}
@@ -1124,102 +2113,708 @@ export default function TenderDetail() {
               </Card>
             </TabsContent>
           )}
+          {/* TARIFF CALCULATOR TAB CONTENT */}
+          <TabsContent value="kalkulator" className="mt-6 col-span-full">
+            <Card className="border-t-4 border-t-emerald-600">
+              <CardHeader className="pb-3 border-b flex flex-row items-center justify-between">
+                <CardTitle className="text-base text-emerald-800 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-600" />
+                  ASA Central — Kalkulator Tarifa i Premija za Ponude
+                </CardTitle>
+                <div className="flex gap-2">
+                  <Button
+                    variant={calcType === "fleet" ? "default" : "outline"}
+                    size="sm"
+                    className={calcType === "fleet" ? "bg-emerald-600 hover:bg-emerald-700" : ""}
+                    onClick={() => setCalcType("fleet")}
+                  >
+                    Vozni park (AO + Kasko)
+                  </Button>
+                  <Button
+                    variant={calcType === "property" ? "default" : "outline"}
+                    size="sm"
+                    className={calcType === "property" ? "bg-emerald-600 hover:bg-emerald-700" : ""}
+                    onClick={() => setCalcType("property")}
+                  >
+                    Imovina i objekti
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {calcType === "fleet" ? (
+                  // FLEET INSURANCE CALCULATOR
+                  <div className="space-y-4">
+                    <h4 className="font-semibold text-sm text-gray-700 border-b pb-1.5">Ulazni parametri flote</h4>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-400 uppercase font-semibold">Broj vozila u floti</label>
+                        <Input
+                          type="number"
+                          value={numVehicles}
+                          onChange={(e) => setNumVehicles(Number(e.target.value))}
+                          className="mt-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 uppercase font-semibold">Prosj. vrijednost vozila (KM)</label>
+                        <Input
+                          type="number"
+                          value={avgVehicleValue}
+                          onChange={(e) => setAvgVehicleValue(Number(e.target.value))}
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-400 uppercase font-semibold">Kasko premijska stopa (%)</label>
+                        <Input
+                          type="number"
+                          step="0.05"
+                          value={kaskoRate}
+                          onChange={(e) => setKaskoRate(Number(e.target.value))}
+                          className="mt-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 uppercase font-semibold">Prosj. AO premija po vozilu (KM)</label>
+                        <Input
+                          type="number"
+                          value={fixedAoPremium}
+                          onChange={(e) => setFixedAoPremium(Number(e.target.value))}
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-gray-400 uppercase font-semibold">Flotni popust (%)</label>
+                      <Input
+                        type="number"
+                        value={fleetDiscount}
+                        onChange={(e) => setFleetDiscount(Number(e.target.value))}
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  // PROPERTY INSURANCE CALCULATOR
+                  <div className="space-y-4">
+                    <h4 className="font-semibold text-sm text-gray-700 border-b pb-1.5">Ulazni parametri imovine</h4>
+                    
+                    <div>
+                      <label className="text-xs text-gray-400 uppercase font-semibold">Ukupna vrijednost imovine / objekata (KM)</label>
+                      <Input
+                        type="number"
+                        value={propertyValue}
+                        onChange={(e) => setPropertyValue(Number(e.target.value))}
+                        className="mt-1"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-400 uppercase font-semibold">Stopa osiguranja imovine (%)</label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={propertyRate}
+                          onChange={(e) => setPropertyRate(Number(e.target.value))}
+                          className="mt-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 uppercase font-semibold">Stopa odgovornosti (%)</label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={liabilityRate}
+                          onChange={(e) => setLiabilityRate(Number(e.target.value))}
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-gray-400 uppercase font-semibold">Komercijalni popust (%)</label>
+                      <Input
+                        type="number"
+                        value={propertyDiscount}
+                        onChange={(e) => setPropertyDiscount(Number(e.target.value))}
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                <div className="col-span-full mt-2">
+                  <h4 className="font-semibold text-sm text-gray-700 border-b pb-1.5 mt-4">Dodatni podaci (Izvučeni iz TD)</h4>
+                  <div className="grid grid-cols-2 gap-4 mt-3">
+                    <div>
+                      <label className="text-xs text-emerald-600 uppercase font-bold flex items-center gap-1">
+                        <Bot className="w-3 h-3" /> Iznos Garancije (KM)
+                      </label>
+                      <Input
+                        type="number"
+                        value={guaranteeAmount}
+                        onChange={(e) => setGuaranteeAmount(Number(e.target.value))}
+                        className="mt-1 bg-emerald-50 border-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-emerald-600 uppercase font-bold flex items-center gap-1">
+                        <Bot className="w-3 h-3" /> Rok isporuke (dani)
+                      </label>
+                      <Input
+                        type="number"
+                        value={deliveryDays}
+                        onChange={(e) => setDeliveryDays(Number(e.target.value))}
+                        className="mt-1 bg-emerald-50 border-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* LIVE PREVIEW AND RESULTS */}
+                <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-5 flex flex-col justify-between">
+                  <div>
+                    <h4 className="font-bold text-sm text-emerald-800 border-b border-emerald-100 pb-1.5 uppercase tracking-wide">
+                      Izračun premije — ASA Central
+                    </h4>
+                    
+                    {calcType === "fleet" ? (
+                      <div className="space-y-2 mt-4 text-sm text-emerald-900">
+                        <div className="flex justify-between">
+                          <span>Kasko Premija (Neto):</span>
+                          <span className="font-semibold">{rawKasko.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>AO Premija (Neto):</span>
+                          <span className="font-semibold">{rawAo.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between border-b border-emerald-100 pb-2">
+                          <span>Flotni Popust ({fleetDiscount}%):</span>
+                          <span className="text-red-600 font-semibold">-{discountFleetAmount.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-500 pt-1">
+                          <span>Neto premija sa popustom:</span>
+                          <span>{netFleetPremium.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-500 border-b border-emerald-100 pb-2">
+                          <span>Porez i fondovi (5%):</span>
+                          <span>{taxFleet.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between pt-3 text-emerald-950">
+                          <span className="font-bold text-base">KONAČNA PONUDA (SA PDV):</span>
+                          <span className="font-black text-xl text-emerald-800">{finalFleetPremium.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 mt-4 text-sm text-emerald-900">
+                        <div className="flex justify-between">
+                          <span>Osiguranje Imovine (Neto):</span>
+                          <span className="font-semibold">{rawProp.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Odgovornost (Neto):</span>
+                          <span className="font-semibold">{rawLiab.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between border-b border-emerald-100 pb-2">
+                          <span>Komercijalni Popust ({propertyDiscount}%):</span>
+                          <span className="text-red-600 font-semibold">-{discountPropAmount.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-500 pt-1">
+                          <span>Neto premija sa popustom:</span>
+                          <span>{netPropPremium.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-500 border-b border-emerald-100 pb-2">
+                          <span>Porez i fondovi (5%):</span>
+                          <span>{taxProp.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                        <div className="flex justify-between pt-3 text-emerald-950">
+                          <span className="font-bold text-base">KONAČNA PONUDA (SA PDV):</span>
+                          <span className="font-black text-xl text-emerald-800">{finalPropPremium.toLocaleString("bs-BA")} KM</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-6 pt-4 border-t border-emerald-100">
+                    <Button 
+                      onClick={handleSaveCalculation} 
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white w-full"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Sačuvaj kalkulaciju u bilješke tendera
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
 
       {/* STICKY SIDEBAR */}
-      <aside className="w-full lg:w-72 flex-shrink-0 space-y-4">
-        <Card className="sticky top-20">
-          <CardHeader className="bg-primary/5 border-b pb-3">
-            <CardTitle className="text-sm text-primary">Ključni podaci</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y">
-              <div className="p-3">
-                <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Rok za predaju</div>
-                {(() => {
-                  const dl = new Date(t.deadline);
-                  const now = new Date();
-                  const days = Math.ceil((dl.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-                  const color = days <= 3 ? "text-red-600" : days <= 7 ? "text-amber-600" : "text-gray-800";
-                  return (
-                    <>
-                      <div className={`font-bold text-base ${color}`}>{formatDate(t.deadline)}</div>
-                      {days > 0 && <div className={`text-xs ${color}`}>{days} dana preostalo</div>}
-                    </>
-                  );
-                })()}
-              </div>
-
-              {t.questionsDeadline && (
+      <aside className="w-full lg:w-72 flex-shrink-0">
+        <div className="sticky top-20 space-y-4">
+          <Card>
+            <CardHeader className="bg-primary/5 border-b pb-3">
+              <CardTitle className="text-sm text-primary">Ključni podaci</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y">
                 <div className="p-3">
-                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Rok za pitanja</div>
-                  <div className="font-medium text-sm text-gray-800">{formatDate(t.questionsDeadline)}</div>
+                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Rok za predaju</div>
+                  {(() => {
+                    if (!t.deadline) return <div className="text-sm text-amber-700">Rok nije poznat — provjerite portal</div>;
+                    const dl = new Date(t.deadline);
+                    const now = new Date();
+                    const days = Math.ceil((dl.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                    const color = days <= 3 ? "text-red-600" : days <= 7 ? "text-amber-600" : "text-gray-800";
+                    return (
+                      <>
+                        <div className={`font-bold text-base ${color}`}>{formatDate(t.deadline)}</div>
+                        {days > 0 && <div className={`text-xs ${color}`}>{days} dana preostalo</div>}
+                      </>
+                    );
+                  })()}
                 </div>
-              )}
 
-              <div className="p-3">
-                <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Procijenjena vrijednost</div>
-                <div className="font-bold text-sm text-primary">
-                  {t.estimatedValue ? t.estimatedValue.toLocaleString("bs-BA") + " " + (t.currency || "KM") : "N/A"}
-                </div>
-              </div>
+                {t.questionsDeadline && (
+                  <div className="p-3">
+                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Rok za pitanja</div>
+                    <div className="font-medium text-sm text-gray-800">{formatDate(t.questionsDeadline)}</div>
+                  </div>
+                )}
 
-              {t.guaranteeAmount != null && (
                 <div className="p-3">
-                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Garancija</div>
-                  <div className="font-medium text-sm text-gray-800">{formatMoney(t.guaranteeAmount, t.currency)}</div>
+                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Procijenjena vrijednost</div>
+                  <div className="font-bold text-sm text-primary">
+                    {t.estimatedValue ? t.estimatedValue.toLocaleString("bs-BA") + " " + (t.currency || "KM") : "N/A"}
+                  </div>
                 </div>
-              )}
 
-              <div className="p-3">
-                <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">AI Ocjena</div>
-                <div className="font-bold text-sm text-gray-800">{t.relevanceScore != null ? `${t.relevanceScore}/100` : "Nije analiziran"}</div>
-              </div>
+                {t.guaranteeAmount != null && (
+                  <div className="p-3">
+                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Garancija</div>
+                    <div className="font-medium text-sm text-gray-800">{formatMoney(t.guaranteeAmount, t.currency)}</div>
+                  </div>
+                )}
 
-              <div className="p-3">
-                <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Entitet</div>
-                <div className="font-medium text-sm text-gray-800">{t.entity}</div>
-              </div>
-
-              {t.hasEAuction && (
                 <div className="p-3">
-                  <Badge className="bg-purple-100 text-purple-700 border-purple-200 w-full justify-center">
-                    <Zap className="w-3 h-3 mr-1" /> E-aukcija aktivna
-                  </Badge>
+                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">AI Ocjena</div>
+                  <div className="font-bold text-sm text-gray-800">{t.relevanceScore != null ? `${t.relevanceScore}/100` : "Ocjena nije procijenjena"}</div>
                 </div>
-              )}
-            </div>
 
-            <div className="p-3 space-y-2 border-t">
-              <Button
-                variant={isWatched ? "default" : "outline"}
-                className={`w-full justify-start text-sm ${isWatched ? "bg-primary text-white" : ""}`}
-                onClick={handleWatch}
-              >
-                {isWatched ? <BookmarkCheck className="w-4 h-4 mr-2" /> : <Bookmark className="w-4 h-4 mr-2" />}
-                {isWatched ? "Pratim tender" : "Dodaj u praćenje"}
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-start text-sm text-primary border-primary/30"
-                onClick={handleAnalyze}
-                disabled={analyzeTender.isPending}
-              >
-                <BrainCircuit className="w-4 h-4 mr-2" />
-                {analyzeTender.isPending ? "Analiziranje..." : analysis ? "Ponovi AI analizu" : "Pokreni AI analizu"}
-              </Button>
-              {ejnLink && (
-                <a href={ejnLink} target="_blank" rel="noreferrer" className="block">
+                <div className="p-3">
+                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Entitet</div>
+                  <div className="font-medium text-sm text-gray-800">{t.entity}</div>
+                </div>
+
+                {t.hasEAuction && (
+                  <div className="p-3">
+                    <Badge className="bg-purple-100 text-purple-700 border-purple-200 w-full justify-center">
+                      <Zap className="w-3 h-3 mr-1" /> E-aukcija aktivna
+                    </Badge>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 space-y-2 border-t">
+                <Button
+                  variant={isWatched ? "default" : "outline"}
+                  className={`w-full justify-start text-sm ${isWatched ? "bg-primary text-white" : ""}`}
+                  onClick={handleWatch}
+                >
+                  {isWatched ? <BookmarkCheck className="w-4 h-4 mr-2" /> : <Bookmark className="w-4 h-4 mr-2" />}
+                  {isWatched ? "Pratim tender" : "Dodaj u praćenje"}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start text-sm text-primary border-primary/30"
+                  onClick={handleAnalyze}
+                  disabled={analyzeTender.isPending}
+                >
+                  <BrainCircuit className="w-4 h-4 mr-2" />
+                  {analyzeTender.isPending ? "Analiziranje..." : analysis ? "Ponovi obradu izvora" : "Pokreni AI analizu"}
+                </Button>
+                <a href={`/api/tenders/${t.id}/pdf?token=${token}`} target="_blank" rel="noopener noreferrer" className="block">
                   <Button variant="outline" className="w-full justify-start text-sm">
-                    <ExternalLink className="w-4 h-4 mr-2" /> EJN Portal
+                    <ExternalLink className="w-4 h-4 mr-2" /> Otvori originalni PDF
                   </Button>
                 </a>
+                {ejnLink && (
+                  <a href={ejnLink} target="_blank" rel="noreferrer" className="block">
+                    <Button variant="outline" className="w-full justify-start text-sm">
+                      <ExternalLink className="w-4 h-4 mr-2" /> EJN Portal
+                    </Button>
+                  </a>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* WIN PROBABILITY PANEL */}
+          <Card className="shadow-sm">
+            <CardHeader className="bg-primary/5 border-b pb-3">
+              <CardTitle className="text-sm text-primary flex items-center gap-1.5">
+                <BrainCircuit className="w-4 h-4" /> Vjerovatnoća pobjede
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 space-y-3">
+              {t.winProbability ? (
+                <>
+                  <div className="flex items-end justify-between">
+                    <span className="text-3xl font-black tracking-tight" style={{ color: getProbabilityColor(t.winProbability.totalPct) }}>
+                      {t.winProbability.totalPct}%
+                    </span>
+                    <span className="text-[10px] font-semibold text-gray-400 uppercase">ASA Central</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden shadow-inner">
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${t.winProbability.totalPct}%`,
+                        backgroundColor: getProbabilityColor(t.winProbability.totalPct),
+                      }}
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-xs"
+                    onClick={() => setShowWinProbabilityModal(true)}
+                  >
+                    Prikaži detalje →
+                  </Button>
+                </>
+              ) : (
+                <div className="text-xs text-gray-400 italic">Nije procijenjena. Dostupni podaci ne omogućavaju pouzdanu procjenu pobjede.</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* CONTRACTING AUTHORITY PROFILE PANEL */}
+          <Card className="shadow-sm">
+            <CardHeader className="bg-primary/5 border-b pb-3">
+              <CardTitle className="text-sm text-primary flex items-center gap-1.5">
+                🏛️ Ugovorni organ
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 space-y-3 text-xs">
+              {t.authorityProfile ? (
+                <>
+                  <div className="font-bold text-gray-900 border-b pb-1 truncate" title={t.authorityProfile.name}>
+                    {t.authorityProfile.name}
+                  </div>
+                  <div className="space-y-1 pt-1 text-gray-600">
+                    <div className="flex justify-between">
+                      <span>Historija dodjela:</span>
+                      <span className="font-semibold">{t.historicalAwards?.length || 0} tendera</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Prosječna vrijednost:</span>
+                      <span className="font-semibold">
+                        {t.historicalAwards?.length 
+                          ? `${Math.round(t.historicalAwards.reduce((sum: number, a: any) => sum + (a.winningBidAmount || 0), 0) / t.historicalAwards.length).toLocaleString("bs-BA")} KM`
+                          : "0 KM"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t">
+                    <div className="font-semibold text-gray-500 uppercase tracking-wider text-[10px] mb-2">Posljednje 3 dodjele:</div>
+                    <div className="space-y-2">
+                      {(t.historicalAwards?.slice(0, 3) || []).map((award: any) => {
+                        const isAsa = isAsaWinner(award.winnerName);
+                        return (
+                          <div key={award.id} className="flex flex-col gap-0.5 bg-gray-50 border border-gray-100 rounded p-2">
+                            <div className="font-medium text-gray-900 flex justify-between">
+                              <span className="truncate max-w-[150px] font-semibold" title={award.winnerName}>{award.winnerName}</span>
+                              <span className="font-bold">{award.winningBidAmount ? `${Math.round(award.winningBidAmount).toLocaleString("bs-BA")} KM` : "N/A"}</span>
+                            </div>
+                            <div className="flex justify-between text-[10px] text-gray-400">
+                              <span>{award.cpvKod || "Osiguranje"}</span>
+                              <span>
+                                {award.awardDate ? new Date(award.awardDate).toLocaleDateString("bs-BA", { month: "2-digit", year: "numeric" }) : ""}
+                                {isAsa && " ✓"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {(!t.historicalAwards || t.historicalAwards.length === 0) && (
+                        <div className="text-[11px] text-gray-400 italic">Nema historijskih dodjela.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-xs mt-2"
+                    onClick={() => setShowCaHistoryModal(true)}
+                  >
+                    Vidi cijelu historiju →
+                  </Button>
+                </>
+              ) : (
+                <div className="text-[11px] text-gray-400 italic">Nije pronađen profil ugovornog organa.</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </aside>
+
+
+
+      {/* PDF VIEWER DIALOG/MODAL */}
+      {activePdfUrl && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border">
+            {/* Modal Header */}
+            <div className="bg-primary px-6 py-4 flex items-center justify-between text-white shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="w-5 h-5 text-blue-200" />
+                <h3 className="font-bold text-base truncate">{activePdfUrl.name}</h3>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex bg-blue-950/60 rounded-lg p-0.5 text-xs text-blue-200">
+                  <button 
+                    onClick={() => setPdfMode("direct")}
+                    className={`px-3 py-1 rounded-md transition-colors ${pdfMode === "direct" ? "bg-primary text-white font-medium" : "hover:text-white"}`}
+                  >
+                    Ugrađeni (brzo)
+                  </button>
+                  <button 
+                    onClick={() => setPdfMode("google")}
+                    className={`px-3 py-1 rounded-md transition-colors ${pdfMode === "google" ? "bg-primary text-white font-medium" : "hover:text-white"}`}
+                  >
+                    Google PDF
+                  </button>
+                </div>
+                <button 
+                  onClick={() => setActivePdfUrl(null)} 
+                  className="text-blue-200 hover:text-white font-bold text-lg p-1"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {/* Modal Body / Iframe */}
+            <div className="flex-1 bg-gray-100 relative">
+              {pdfMode === "direct" ? (
+                <iframe 
+                  src={activePdfUrl.url} 
+                  className="w-full h-full border-0" 
+                  title="PDF Direct Viewer"
+                />
+              ) : (
+                <iframe 
+                  src={`https://docs.google.com/viewer?url=${encodeURIComponent(activePdfUrl.url)}&embedded=true`} 
+                  className="w-full h-full border-0"
+                  title="PDF Google Viewer"
+                />
               )}
             </div>
-          </CardContent>
-        </Card>
-      </aside>
+          </div>
+        </div>
+      )}
+
+      {/* PRINTABLE ZJN DECLARATION DIALOG/MODAL */}
+      {activeDeclaration && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:p-0">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl h-[80vh] flex flex-col overflow-hidden border print:border-0 print:shadow-none print:h-auto print:w-full">
+            {/* Modal Header */}
+            <div className="bg-primary px-6 py-4 flex items-center justify-between text-white shrink-0 print:hidden">
+              <div className="flex items-center gap-2 min-w-0">
+                <ShieldCheck className="w-5 h-5 text-blue-200" />
+                <h3 className="font-bold text-base truncate">{activeDeclaration.title}</h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <a 
+                  href={`/api/tenders/${id}/generate-docx?type=${activeDeclaration.type}&token=${token}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                >
+                  <Button className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-8 flex items-center gap-1.5">
+                    <FileDown className="w-3.5 h-3.5" /> Preuzmi Word (.docx)
+                  </Button>
+                </a>
+                <Button 
+                  onClick={() => window.print()} 
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8"
+                >
+                  Printaj Izjavu
+                </Button>
+                <button 
+                  onClick={() => setActiveDeclaration(null)} 
+                  className="text-blue-200 hover:text-white font-bold text-lg p-1"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {/* Modal Body / Previews */}
+            <div className="flex-1 overflow-y-auto p-8 bg-gray-50 flex justify-center print:bg-white print:p-0">
+              <div className="bg-white p-8 border shadow-sm w-full max-w-2xl font-mono text-[11px] whitespace-pre-wrap leading-relaxed text-gray-800 border-gray-300 print:border-0 print:shadow-none print:p-0 print:bg-white print:text-xs">
+                {activeDeclaration.content}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WIN PROBABILITY MODAL */}
+      {showWinProbabilityModal && t.winProbability && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border">
+            {/* Modal Header */}
+            <div className="bg-primary px-6 py-4 flex items-center justify-between text-white shrink-0">
+              <h3 className="font-bold text-base">Breakdown vjerovatnoće pobjede</h3>
+              <button 
+                onClick={() => setShowWinProbabilityModal(false)} 
+                className="text-blue-200 hover:text-white font-bold text-lg p-1"
+              >
+                ✕
+              </button>
+            </div>
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between border-b pb-3 mb-2">
+                <span className="font-bold text-gray-700">Ukupna vjerovatnoća pobjede:</span>
+                <span className="text-2xl font-black" style={{ color: getProbabilityColor(t.winProbability.totalPct) }}>
+                  {t.winProbability.totalPct}%
+                </span>
+              </div>
+              <div className="space-y-3">
+                {Object.entries(t.winProbability.factors).map(([key, f]: [string, any]) => {
+                  const isPositive = f.score > 0;
+                  const isNegative = f.score < 0;
+                  const symbol = isPositive ? "✓" : isNegative ? "✗" : "~";
+                  const colorClass = isPositive 
+                    ? "text-green-600 bg-green-50 border-green-200" 
+                    : isNegative 
+                      ? "text-red-600 bg-red-50 border-red-200" 
+                      : "text-gray-500 bg-gray-50 border-gray-200";
+                  
+                  return (
+                    <div key={key} className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed ${colorClass}`}>
+                      <span className="font-bold text-sm shrink-0">{symbol}</span>
+                      <div className="flex-1">
+                        <p className="font-semibold text-gray-800">{f.detail}</p>
+                      </div>
+                      <span className="font-bold shrink-0">{f.score > 0 ? `+${f.score}` : f.score}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="border-t pt-4 mt-2 flex justify-between items-center text-xs font-semibold text-gray-500">
+                <span>Baseline Win Probability</span>
+                <span>+15%</span>
+              </div>
+              <div className="border-t pt-4 mt-2 flex justify-end">
+                <Button onClick={() => setShowWinProbabilityModal(false)} className="bg-primary hover:bg-primary/90">
+                  Zatvori
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONTRACTING AUTHORITY HISTORY MODAL */}
+      {showCaHistoryModal && t.authorityProfile && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden border">
+            {/* Modal Header */}
+            <div className="bg-primary px-6 py-4 flex items-center justify-between text-white shrink-0">
+              <div>
+                <h3 className="font-bold text-base flex items-center gap-2">
+                  🏛️ {t.authorityProfile.name}
+                </h3>
+                <p className="text-xs text-blue-200 mt-0.5">Historija dodjela ugovora za osiguranja na EJN</p>
+              </div>
+              <button 
+                onClick={() => setShowCaHistoryModal(false)} 
+                className="text-blue-200 hover:text-white font-bold text-lg p-1"
+              >
+                ✕
+              </button>
+            </div>
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {t.historicalAwards && t.historicalAwards.length > 0 ? (
+                <div className="overflow-x-auto border rounded-lg shadow-sm">
+                  <table className="w-full text-xs text-left border-collapse bg-white">
+                    <thead>
+                      <tr className="border-b bg-gray-50 text-gray-500 font-bold uppercase tracking-wider">
+                        <th className="p-3">Naziv tendera / EJN broj</th>
+                        <th className="p-3">Tip osiguranja</th>
+                        <th className="p-3">Pobjednik</th>
+                        <th className="p-3 text-right">Ugovorna vrijednost</th>
+                        <th className="p-3 text-right">Datum dodjele</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {t.historicalAwards.map((award: any) => {
+                        const isAsa = isAsaWinner(award.winnerName);
+                        return (
+                          <tr key={award.id} className={`hover:bg-gray-50 transition-colors ${isAsa ? "bg-green-50/20" : ""}`}>
+                            <td className="p-3">
+                              <div className="font-semibold text-gray-900">{award.procedureName}</div>
+                              {award.ejnBroj && <div className="text-[10px] text-gray-400 font-mono mt-0.5">{award.ejnBroj}</div>}
+                            </td>
+                            <td className="p-3">
+                              <Badge variant="outline" className="bg-blue-50/50 text-blue-700 border-blue-100">
+                                {award.cpvKod || "Opšte osiguranje"}
+                              </Badge>
+                            </td>
+                            <td className="p-3">
+                              <span className={`font-semibold ${isAsa ? "text-green-700 flex items-center gap-1" : "text-gray-700"}`}>
+                                {isAsa && "✓"} {award.winnerName}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right font-bold text-gray-900">
+                              {award.winningBidAmount ? `${award.winningBidAmount.toLocaleString("bs-BA")} KM` : "N/A"}
+                            </td>
+                            <td className="p-3 text-right text-gray-500">
+                              {award.awardDate ? new Date(award.awardDate).toLocaleDateString("bs-BA") : "N/A"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center text-gray-400 py-12">Nema zabilježene historije dodjela ugovora.</div>
+              )}
+            </div>
+            {/* Modal Footer */}
+            <div className="border-t px-6 py-4 flex justify-end bg-gray-50 shrink-0">
+              <Button onClick={() => setShowCaHistoryModal(false)} className="bg-primary hover:bg-primary/90">
+                Zatvori
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+function getProbabilityColor(pct: number): string {
+  if (pct > 70) return "#10b981"; // emerald-500
+  if (pct >= 40) return "#f59e0b"; // amber-500
+  return "#ef4444"; // red-500
+}
+
+function isAsaWinner(winnerName: string): boolean {
+  const w = (winnerName || "").toLowerCase();
+  return w.includes("asa") || w.includes("central");
+}
+

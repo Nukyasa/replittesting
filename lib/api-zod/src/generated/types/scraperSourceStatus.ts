@@ -7,6 +7,15 @@
  */
 
 export interface ScraperSourceStatus {
+  supported?: boolean;
+  tendersNew?: number;
+  tendersUpdated?: number;
+  /** @nullable */
+  lastError?: string | null;
+  warnings?: string[];
+  hasMore?: boolean;
+  schedule?: string;
+  detail?: string;
   source: string;
   /** @nullable */
   lastRun?: Date | null;

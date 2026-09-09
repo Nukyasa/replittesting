@@ -8,7 +8,7 @@ import { logger } from "../lib/logger";
 
 export const authRouter = Router();
 
-const isDev = process.env.NODE_ENV === "development";
+const isDev = process.env.NODE_ENV !== "production";
 const JWT_SECRET = process.env.JWT_SECRET ?? (isDev ? "asa_tender_jwt_secret_2026" : null);
 
 if (!JWT_SECRET) {
@@ -44,7 +44,7 @@ authRouter.post("/login", async (req, res) => {
   const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
 
   const { password: _p, ...safeUser } = user;
-  res.json({ token, user: safeUser });
+  return res.json({ token, user: safeUser });
 });
 
 authRouter.post("/logout", (_req, res) => {
@@ -62,10 +62,15 @@ authRouter.get("/me", async (req, res) => {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, payload.userId)).limit(1);
     if (!user) return res.status(401).json({ error: "User not found" });
     const { password: _p, ...safeUser } = user;
-    res.json(safeUser);
+    return res.json(safeUser);
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }
 });
 
 export { JWT_SECRET };
+
+authRouter.get("/debug-users", async (req, res) => {
+  const users = await db.select().from(usersTable);
+  res.json(users);
+});

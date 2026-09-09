@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: tender-manager-ai
+    env: node
+    plan: free
+    region: frankfurt
+    buildCommand: pnpm install --frozen-lockfile=false && pnpm run build && pnpm --filter api-server build
+    startCommand: pnpm --filter api-server start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_START_DELAY_MS
+        value: "5000"

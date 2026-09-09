@@ -47,3 +47,50 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Local database & logs
+.pglite-db/
+.pglite-db*/
+.vs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Scratch & temporary artifacts
+test*
+check_*
+parse*
+inspect_*
+print_*
+run-*
+query_*
+read_*
+update_*
+trigger*
+fetch_*
+find_*
+get_*
+clear-db*
+list-db*
+body.json
+*.png
+*.html
+*.mjs
+!artifacts/api-server/build.mjs
+*.cjs
+*.bak
+meta.xml
+uploads/
+artifacts/api-server/uploads/
+dist/
+dist-ssr/
+*.local
+

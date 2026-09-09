@@ -9,7 +9,7 @@ setAuthTokenGetter(() => {
     const raw = localStorage.getItem("asa_auth_storage");
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return parsed?.state?.token || null;
+    return parsed?.state?.token ?? parsed?.token ?? null;
   } catch (e) {
     return null;
   }

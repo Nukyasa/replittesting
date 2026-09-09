@@ -92,14 +92,14 @@ analyticsRouter.get("/by-category", async (_req, res) => {
     .select({
       category: tendersTable.category,
       count: sql<number>`count(*)::int`,
-      avgScore: sql<number>`coalesce(avg(a.relevance_score), 0)`,
+      avgScore: sql<number>`coalesce(avg("ai_analysis"."relevance_score"), 0)`,
     })
     .from(tendersTable)
     .leftJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
     .groupBy(tendersTable.category)
     .orderBy(sql`count(*) desc`);
 
-  res.json(rows.map((r) => ({ ...r, avgScore: Math.round(r.avgScore) })));
+  res.json(rows.map((r: any) => ({ ...r, avgScore: Math.round(r.avgScore) })));
 });
 
 analyticsRouter.get("/by-entity", async (_req, res) => {

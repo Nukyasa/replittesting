@@ -5,6 +5,7 @@ import { EjnApiService } from "./ejnApiService";
 import { scraperEvents } from "../lib/scraperEvents";
 import { compareAnnouncements, noticeStatus, parseEjnDate, procedureIdentity, summarizeLots, SyncGate, type EjnRow } from "./ejnIngestion";
 import { notifyMatchedTender } from "./tenderNotifications";
+import { sendTenderAlertEmail, sendTenderChangeEmail } from "./emailNotificationService";
 export { SyncAlreadyRunningError } from "./ejnIngestion";
 
 const gate = new SyncGate();
@@ -166,12 +167,16 @@ async function performSync(logId: string, startedAt: Date, options: SyncOptions)
             ? String(item.ContractingAuthorityId) : `name:${record.contractingAuth.toLocaleLowerCase("bs")}`;
           await tx.insert(contractingAuthorityProfilesTable).values({ id: randomUUID(), ejnId: authorityId, name: record.contractingAuth, lastUpdated: new Date() })
             .onConflictDoUpdate({ target: contractingAuthorityProfilesTable.ejnId, set: { name: record.contractingAuth, lastUpdated: new Date() } });
+          const recordedChanges: Array<{ field: string; oldValue?: string; newValue?: string }> = [];
           if (existing) {
             await tx.update(tendersTable).set({ ...record, updatedAt: new Date() }).where(eq(tendersTable.id, existing.id));
             for (const field of ["deadline", "status", "estimatedValue"] as const) {
               const before = existing[field] instanceof Date ? existing[field].toISOString() : String(existing[field] ?? "");
               const after = record[field] instanceof Date ? (record[field] as Date).toISOString() : String(record[field] ?? "");
-              if (before !== after) await tx.insert(tenderChangesTable).values({ id: randomUUID(), tenderId, field, oldValue: before, newValue: after, notified: false });
+              if (before !== after) {
+                await tx.insert(tenderChangesTable).values({ id: randomUUID(), tenderId, field, oldValue: before, newValue: after, notified: false });
+                recordedChanges.push({ field, oldValue: before, newValue: after });
+              }
             }
           } else {
             await tx.insert(tendersTable).values({ id: tenderId, ...record });
@@ -188,6 +193,18 @@ async function performSync(logId: string, startedAt: Date, options: SyncOptions)
         if (!existing && isAsaCore) {
           scraperEvents.emit("new_tender", { tender: { id: tenderId, ...record }, isInsurance, isInspection });
           await notifyMatchedTender({ id: tenderId, title: record.title, description: record.description, cpvCodes, contractingAuth: record.contractingAuth, estimatedValue: record.estimatedValue, status: record.status }).catch(() => {});
+          
+          // Instant email notification to nurdin.smajic@asacentral.ba
+          void sendTenderAlertEmail({
+            id: tenderId,
+            title: record.title,
+            contractingAuth: record.contractingAuth,
+            estimatedValue: record.estimatedValue,
+            deadline: record.deadline,
+            hasEAuction: record.hasEAuction,
+            category: record.category,
+            sourceUrl: record.sourceUrl,
+          }).catch(() => {});
         }
         if (record.status === "open" && isAsaCore) processingIds.push(tenderId);
       }

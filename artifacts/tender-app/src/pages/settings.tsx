@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useGetMe, useGetScraperStatus, useTriggerScraper } from "@workspace/api-client-react";
+import { useGetMe, useGetScraperStatus, useTriggerScraper, customFetch } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate } from "@/lib/format";
-import { User, Bell, Database, Briefcase, Settings2, RefreshCw, CheckCircle2 } from "lucide-react";
+import { User, Bell, Database, Briefcase, Settings2, RefreshCw, CheckCircle2, Mail, Send, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
@@ -18,6 +18,23 @@ export default function SettingsPage() {
   const triggerScraper = useTriggerScraper();
   const [triggeringSource, setTriggeringSource] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
+
+  const handleSendTestEmail = async () => {
+    setIsSendingTestEmail(true);
+    try {
+      const res = await customFetch<{ success: boolean; message: string }>("/api/notifications/test-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "nurdin.smajic@asacentral.ba" }),
+      });
+      toast.success(res.message || "Testni email je uspješno poslan!");
+    } catch (err: any) {
+      toast.error(err.message || "Greška pri slanju testnog emaila");
+    } finally {
+      setIsSendingTestEmail(false);
+    }
+  };
 
   const handleTrigger = async (source: string) => {
     setTriggeringSource(source);
@@ -129,7 +146,67 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="notifikacije" className="mt-6">
+        <TabsContent value="notifikacije" className="mt-6 space-y-6">
+          <Card className="border-2 border-blue-200 bg-gradient-to-br from-blue-50/70 via-white to-sky-50/50 shadow-sm overflow-hidden">
+            <CardHeader className="pb-3 border-b border-blue-100 bg-blue-900/5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base text-gray-900 flex items-center gap-2">
+                      Instant Email Notifikacije (ASA Central Alarm)
+                      <Badge className="bg-emerald-600 text-white text-[11px] font-semibold">Aktivan</Badge>
+                    </CardTitle>
+                    <CardDescription className="text-xs text-gray-600">
+                      Automatsko slanje obavijesti o prilikama za osiguranje i tehnički pregled
+                    </CardDescription>
+                  </div>
+                </div>
+                <Button
+                  onClick={handleSendTestEmail}
+                  disabled={isSendingTestEmail}
+                  size="sm"
+                  className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm shrink-0"
+                >
+                  <Send className={`w-3.5 h-3.5 mr-1.5 ${isSendingTestEmail ? "animate-spin" : ""}`} />
+                  {isSendingTestEmail ? "Slanje..." : "Pošalji testni email"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-4 text-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-3 bg-white rounded-lg border border-blue-100/80 shadow-2xs">
+                  <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider block">Glavni primalac</span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="font-bold text-gray-900 text-sm">nurdin.smajic@asacentral.ba</span>
+                    <Badge variant="outline" className="text-[10px] text-blue-700 border-blue-200 bg-blue-50">Zadana adresa</Badge>
+                  </div>
+                </div>
+                <div className="p-3 bg-white rounded-lg border border-blue-100/80 shadow-2xs">
+                  <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider block">Fokus praćenja</span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="font-medium text-gray-800 text-sm">Osiguranje &amp; Tehnički pregled</span>
+                    <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 bg-emerald-50">100% filtrirano</Badge>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white/80 p-3.5 rounded-lg border border-gray-100 space-y-2 text-xs text-gray-600">
+                <div className="font-semibold text-gray-800 flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-amber-500" />
+                  Kada stiže email na nurdin.smajic@asacentral.ba?
+                </div>
+                <ul className="space-y-1.5 list-disc pl-4 text-gray-600">
+                  <li><strong>Novi tender na EJN portalu:</strong> Čim automatski scraper ili ručna provjera pronađe tender za osiguranje ili tehnički pregled vozila.</li>
+                  <li><strong>Izmjena tenderske dokumentacije (Redline Diff):</strong> Čim ugovorni organ izmijeni rok ili uslove za tender koji pratite.</li>
+                  <li><strong>Upozorenje o isteku roka:</strong> 7 i 3 dana prije isteka roka za dostavljanje ponude.</li>
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Notifikacijske postavke</CardTitle>

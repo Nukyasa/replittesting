@@ -40,6 +40,9 @@ import { UrzAppealCard } from "@/components/UrzAppealCard";
 import { PostSubmissionTracker } from "@/components/PostSubmissionTracker";
 import { AsaChatWithCitations } from "@/components/AsaChatWithCitations";
 import { AuthorityBehavioralDossier } from "@/components/AuthorityBehavioralDossier";
+import { UrzAppealGenerator } from "@/components/UrzAppealGenerator";
+import { EAuctionSimulator } from "@/components/EAuctionSimulator";
+import { TenderComplianceMatrix } from "@/components/TenderComplianceMatrix";
 
 type TenderDetail = {
   id: string;
@@ -1246,6 +1249,9 @@ export default function TenderDetail() {
             <TabsTrigger value="lotovi">▦ Lotovi i CPV</TabsTrigger>
             <TabsTrigger value="dokumenti">📄 Dokumenti</TabsTrigger>
             <TabsTrigger value="kalkulator" className="text-emerald-700 font-bold bg-emerald-50/70 border border-emerald-200">🧮 Kalkulator ponude (ASA Tarife)</TabsTrigger>
+            <TabsTrigger value="urz-zalba" className="text-purple-700 font-bold bg-purple-50/70 border border-purple-200">⚖️ URŽ Žalba</TabsTrigger>
+            <TabsTrigger value="e-aukcija" className="text-amber-800 font-bold bg-amber-100/70 border border-amber-300">⚡ E-Aukcija Simulator</TabsTrigger>
+            <TabsTrigger value="kontrola-ponude" className="text-teal-700 font-bold bg-teal-50/70 border border-teal-200">✅ Kontrola usklađenosti</TabsTrigger>
             <TabsTrigger value="zjn-kontrolna">🤖 Priprema ponude</TabsTrigger>
             <TabsTrigger value="analiza">📊 Analiza</TabsTrigger>
             <TabsTrigger value="parsirano">🔍 Parsirano</TabsTrigger>
@@ -2096,6 +2102,35 @@ export default function TenderDetail() {
               <p className="text-xs text-gray-500">Generisani Word dokumenti su nacrti s poljima za dopunu. Ne predstavljaju potvrdu ispunjenosti uslova niti spremnosti za predaju.</p>
             </CardContent></Card>
           </TabsContent>
+
+          {/* URZ ZALBA TAB */}
+          <TabsContent value="urz-zalba" className="mt-6">
+            <UrzAppealGenerator
+              tenderId={t.id}
+              tenderTitle={t.title}
+              contractingAuth={t.contractingAuth}
+              estimatedValue={t.estimatedValue}
+            />
+          </TabsContent>
+
+          {/* E-AUKCIJA SIMULATOR TAB */}
+          <TabsContent value="e-aukcija" className="mt-6">
+            <EAuctionSimulator
+              tenderEstimatedValue={t.estimatedValue || 0}
+              currency={t.currency}
+              hasEAuction={t.hasEAuction}
+            />
+          </TabsContent>
+
+          {/* KONTROLA USKLAĐENOSTI TAB */}
+          <TabsContent value="kontrola-ponude" className="mt-6">
+            <TenderComplianceMatrix
+              tenderId={t.id}
+              tenderTitle={t.title}
+              contractingAuth={t.contractingAuth}
+            />
+          </TabsContent>
+
           {/* AI CHAT TAB */}
           <TabsContent value="chat" className="mt-6">
             <AsaChatWithCitations

@@ -43,24 +43,21 @@ if (hasDatabaseUrl) {
   console.log("=========================================================\n");
 
   const dbPath = process.env.PGLITE_DATA_DIR || path.join(findWorkspaceRoot(process.cwd()) || process.cwd(), ".pglite-db");
+  const pidFile = path.join(dbPath, "postmaster.pid");
+  if (fs.existsSync(pidFile)) {
+    try {
+      fs.unlinkSync(pidFile);
+      console.log("[DATABASE] Removed stale postmaster.pid lock file");
+    } catch {
+      // Ignored
+    }
+  }
   const configuredInitialMemoryMb = Number(process.env.PGLITE_INITIAL_MEMORY_MB || "128");
   const initialMemoryMb = Number.isFinite(configuredInitialMemoryMb)
     ? Math.max(128, Math.min(256, configuredInitialMemoryMb))
     : 128;
   const client = new PGlite(dbPath, {
     initialMemory: initialMemoryMb * 1024 * 1024,
-    startParams: [
-      "--single", "-F", "-O", "-j",
-      "-c", "search_path=public",
-      "-c", "exit_on_error=false",
-      "-c", "log_checkpoints=false",
-      "-c", "max_worker_processes=0",
-      "-c", "max_parallel_workers=0",
-      "-c", "max_parallel_workers_per_gather=0",
-      "-c", "shared_buffers=8MB",
-      "-c", "work_mem=1MB",
-      "-c", "maintenance_work_mem=8MB",
-    ],
   });
   db = drizzlePglite(client, { schema });
 
@@ -101,6 +98,7 @@ if (hasDatabaseUrl) {
       // Check if tables already exist to avoid WASM abort errors when running CREATE TABLE on existing relations
       let tablesExist = false;
       try {
+        await client.waitReady;
         const checkRes = await client.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'users' LIMIT 1;");
         if (checkRes.rows && checkRes.rows.length > 0) {
           tablesExist = true;

@@ -119,6 +119,14 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
     `,
     },
   });
+
+  // Copy seed-data directory to dist/seed-data if present
+  const { cpSync, existsSync } = await import("node:fs");
+  const seedSrc = path.resolve(artifactDir, "src/seed-data");
+  const seedDist = path.resolve(distDir, "seed-data");
+  if (existsSync(seedSrc)) {
+    cpSync(seedSrc, seedDist, { recursive: true });
+  }
 }
 
 buildAll().catch((err) => {

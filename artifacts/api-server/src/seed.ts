@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
+import zlib from "node:zlib";
+import { fileURLToPath } from "node:url";
 import { db } from "@workspace/db";
 import {
   usersTable,
@@ -5,11 +9,14 @@ import {
   aiAnalysisTable,
   scraperLogsTable,
   notificationsTable,
+  contractingAuthorityProfilesTable,
+  historicalAwardsTable,
+  urzDecisionsTable,
 } from "@workspace/db";
 import bcrypt from "bcryptjs";
 import { nanoid } from "./lib/nanoid";
 import { logger } from "./lib/logger";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const SEED_USERS = [
   {
@@ -640,13 +647,6 @@ export async function seedDatabase() {
     }
   }
 
-  // Check if tenders are already seeded.
-  const existingTenders = await db.select().from(tendersTable).limit(1);
-  if (existingTenders.length > 0) {
-    logger.info("Tenders already seeded, skipping");
-    return;
-  }
-
   // Seed local demo users safely if they don't already exist.
   const userIds: string[] = [];
   for (const u of SEED_USERS) {
@@ -670,48 +670,199 @@ export async function seedDatabase() {
     }
   }
 
-  // Seed tenders
-  const tenderIds: string[] = [];
-  for (const t of SEED_TENDERS) {
-    const id = nanoid();
-    await db.insert(tendersTable).values({
-      id,
-      externalId: `EXT-${nanoid(8)}`,
-      source: t.source,
-      title: t.title,
-      description: t.description,
-      contractingAuth: t.contractingAuth,
-      category: t.category,
-      cpvCodes: t.cpvCodes || [],
-      estimatedValue: t.estimatedValue,
-      currency: t.currency,
-      publicationDate: t.publicationDate,
-      deadline: t.deadline,
-      tenderType: t.tenderType,
-      entity: t.entity,
-      status: t.status,
-      sourceUrl: `https://www.ejn.gov.ba/tender/${nanoid(8)}`,
-    });
-    tenderIds.push(id);
-  }
-  logger.info({ count: SEED_TENDERS.length }, "Seeded tenders");
+  // Check if tenders are already populated
+  const existingTendersCountRes = await db.select({ count: sql<number>`count(*)` }).from(tendersTable);
+  const tenderCount = Number(existingTendersCountRes[0]?.count || 0);
 
-  // Seed AI analyses for first 3 tenders
-  for (let i = 0; i < Math.min(AI_ANALYSES.length, tenderIds.length); i++) {
-    await db.insert(aiAnalysisTable).values({
-      id: nanoid(),
-      tenderId: tenderIds[i],
-      ...AI_ANALYSES[i],
-      keyRequirements: AI_ANALYSES[i].keyRequirements,
-      eligibilityCriteria: AI_ANALYSES[i].eligibilityCriteria,
-      risks: AI_ANALYSES[i].risks,
-      opportunities: AI_ANALYSES[i].opportunities,
-      redFlags: AI_ANALYSES[i].redFlags,
-      relevanceTags: AI_ANALYSES[i].relevanceTags,
-      requiredDocs: AI_ANALYSES[i].requiredDocs,
-    });
+  if (tenderCount >= 100) {
+    logger.info({ count: tenderCount }, "Tenders already populated, skipping initial tender seed");
+  } else {
+    let snapshotLoaded = false;
+    try {
+      const candidates = [
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "seed-data", "snapshot.json.gz"),
+        path.join(process.cwd(), "artifacts", "api-server", "src", "seed-data", "snapshot.json.gz"),
+        path.join(process.cwd(), "dist", "seed-data", "snapshot.json.gz"),
+        path.join(process.cwd(), "artifacts", "api-server", "dist", "seed-data", "snapshot.json.gz"),
+      ];
+      const snapshotPath = candidates.find((p) => fs.existsSync(p));
+      if (snapshotPath) {
+        logger.info({ snapshotPath }, "Loading snapshot into database...");
+        const buffer = fs.readFileSync(snapshotPath);
+        const decompressed = zlib.gunzipSync(buffer);
+        const data = JSON.parse(decompressed.toString("utf-8"));
+
+        if (Array.isArray(data.authorities) && data.authorities.length > 0) {
+          logger.info({ count: data.authorities.length }, "Seeding authority profiles from snapshot");
+          for (const a of data.authorities) {
+            await db.insert(contractingAuthorityProfilesTable).values({
+              id: a.id,
+              ejnId: a.ejnId || a.ejn_id,
+              name: a.name,
+              level: a.level || null,
+              municipality: a.municipality || null,
+              vrsta: a.vrsta || null,
+              lastScrapedAt: a.lastScrapedAt || a.last_scraped_at ? new Date(a.lastScrapedAt || a.last_scraped_at) : null,
+              lastUpdated: a.lastUpdated || a.last_updated ? new Date(a.lastUpdated || a.last_updated) : new Date(),
+              createdAt: a.createdAt || a.created_at ? new Date(a.createdAt || a.created_at) : new Date(),
+            }).onConflictDoNothing();
+          }
+        }
+
+        if (Array.isArray(data.tenders) && data.tenders.length > 0) {
+          logger.info({ count: data.tenders.length }, "Seeding tenders from snapshot");
+          const batchSize = 100;
+          for (let i = 0; i < data.tenders.length; i += batchSize) {
+            const chunk = data.tenders.slice(i, i + batchSize);
+            await db.insert(tendersTable).values(chunk.map((t: any) => ({
+              id: t.id,
+              externalId: t.externalId || t.external_id,
+              source: t.source,
+              title: t.title,
+              description: t.description,
+              contractingAuth: t.contractingAuth || t.contracting_auth,
+              category: t.category,
+              cpvCodes: t.cpvCodes || t.cpv_codes || [],
+              estimatedValue: t.estimatedValue || t.estimated_value,
+              currency: t.currency || "KM",
+              publicationDate: t.publicationDate || t.publication_date ? new Date(t.publicationDate || t.publication_date) : new Date(),
+              deadline: t.deadline ? new Date(t.deadline) : null,
+              tenderType: t.tenderType || t.tender_type || "open",
+              entity: t.entity || "FBiH",
+              status: t.status || "open",
+              sourceUrl: t.sourceUrl || t.source_url || "https://open.ejn.gov.ba",
+              rawData: t.rawData || t.raw_data || {},
+            }))).onConflictDoNothing();
+          }
+        }
+
+        if (Array.isArray(data.analyses) && data.analyses.length > 0) {
+          logger.info({ count: data.analyses.length }, "Seeding AI analyses from snapshot");
+          for (const a of data.analyses) {
+            await db.insert(aiAnalysisTable).values({
+              id: a.id,
+              tenderId: a.tenderId || a.tender_id,
+              summary: a.summary,
+              keyRequirements: a.keyRequirements || a.key_requirements || [],
+              eligibilityCriteria: a.eligibilityCriteria || a.eligibility_criteria || [],
+              risks: a.risks || [],
+              opportunities: a.opportunities || [],
+              redFlags: a.redFlags || a.red_flags || [],
+              estimatedWorkload: a.estimatedWorkload || a.estimated_workload || "",
+              suggestedApproach: a.suggestedApproach || a.suggested_approach || "",
+              relevanceScore: a.relevanceScore || a.relevance_score || 0,
+              relevanceTags: a.relevanceTags || a.relevance_tags || [],
+              competitionLevel: a.competitionLevel || a.competition_level || "medium",
+              successProbability: a.successProbability || a.success_probability || 0,
+              insuranceRelevance: a.insuranceRelevance || a.insurance_relevance || "",
+              requiredDocs: a.requiredDocs || a.required_docs || [],
+              participationConditions: a.participationConditions || a.participation_conditions || null,
+              requiredDeclarations: a.requiredDeclarations || a.required_declarations || null,
+              awardAnalysis: a.awardAnalysis || a.award_analysis || null,
+              guaranteeInfo: a.guaranteeInfo || a.guarantee_info || null,
+              estimatedPrepTime: a.estimatedPrepTime || a.estimated_prep_time || null,
+              analyzedAt: a.analyzedAt || a.analyzed_at ? new Date(a.analyzedAt || a.analyzed_at) : new Date(),
+              analysisVersion: a.analysisVersion || a.analysis_version || "1",
+            }).onConflictDoNothing();
+          }
+        }
+
+        if (Array.isArray(data.awards) && data.awards.length > 0) {
+          logger.info({ count: data.awards.length }, "Seeding historical awards from snapshot");
+          for (const aw of data.awards) {
+            await db.insert(historicalAwardsTable).values({
+              id: aw.id,
+              tenderId: aw.tenderId || aw.tender_id || null,
+              contractingAuthorityId: aw.contractingAuthorityId || aw.contracting_authority_id || null,
+              contractingAuth: aw.contractingAuth || aw.contracting_auth,
+              procedureName: aw.procedureName || aw.procedure_name,
+              winnerName: aw.winnerName || aw.winner_name,
+              winningBidAmount: aw.winningBidAmount || aw.winning_bid_amount,
+              estimatedValue: aw.estimatedValue || aw.estimated_value || null,
+              discountPct: aw.discountPct || aw.discount_pct || null,
+              currency: aw.currency || "KM",
+              awardDate: aw.awardDate || aw.award_date ? new Date(aw.awardDate || aw.award_date) : new Date(),
+              competitorOffersCount: aw.competitorOffersCount || aw.competitor_offers_count || null,
+              cpvKod: aw.cpvKod || aw.cpv_kod || null,
+              ejnBroj: aw.ejnBroj || aw.ejn_broj || null,
+              createdAt: aw.createdAt || aw.created_at ? new Date(aw.createdAt || aw.created_at) : new Date(),
+            }).onConflictDoNothing();
+          }
+        }
+
+        if (Array.isArray(data.decisions) && data.decisions.length > 0) {
+          logger.info({ count: data.decisions.length }, "Seeding URŽ decisions from snapshot");
+          for (const d of data.decisions) {
+            await db.insert(urzDecisionsTable).values({
+              id: d.id,
+              caseNumber: d.caseNumber || d.case_number,
+              decisionDate: d.decisionDate || d.decision_date ? new Date(d.decisionDate || d.decision_date) : new Date(),
+              contractingAuth: d.contractingAuth || d.contracting_auth,
+              procedureName: d.procedureName || d.procedure_name,
+              appellant: d.appellant,
+              outcome: d.outcome,
+              outcomeLabel: d.outcomeLabel || d.outcome_label,
+              sporniUslov: d.sporniUslov || d.sporni_uslov,
+              legalBasis: d.legalBasis || d.legal_basis,
+              summary: d.summary,
+              ejnBroj: d.ejnBroj || d.ejn_broj || null,
+              category: d.category || "Osiguranje",
+              createdAt: d.createdAt || d.created_at ? new Date(d.createdAt || d.created_at) : new Date(),
+            }).onConflictDoNothing();
+          }
+        }
+
+        snapshotLoaded = true;
+        logger.info("Successfully loaded full snapshot into database");
+      }
+    } catch (err) {
+      logger.error({ err }, "Error importing full snapshot, falling back to demo tenders");
+    }
+
+    if (!snapshotLoaded && tenderCount === 0) {
+      // Fallback: seed demo tenders
+      const tenderIds: string[] = [];
+      for (const t of SEED_TENDERS) {
+        const id = nanoid();
+        await db.insert(tendersTable).values({
+          id,
+          externalId: `EXT-${nanoid(8)}`,
+          source: t.source,
+          title: t.title,
+          description: t.description,
+          contractingAuth: t.contractingAuth,
+          category: t.category,
+          cpvCodes: t.cpvCodes || [],
+          estimatedValue: t.estimatedValue,
+          currency: t.currency,
+          publicationDate: t.publicationDate,
+          deadline: t.deadline,
+          tenderType: t.tenderType,
+          entity: t.entity,
+          status: t.status,
+          sourceUrl: `https://www.ejn.gov.ba/tender/${nanoid(8)}`,
+        });
+        tenderIds.push(id);
+      }
+      logger.info({ count: SEED_TENDERS.length }, "Seeded demo tenders");
+
+      for (let i = 0; i < Math.min(AI_ANALYSES.length, tenderIds.length); i++) {
+        await db.insert(aiAnalysisTable).values({
+          id: nanoid(),
+          tenderId: tenderIds[i],
+          ...AI_ANALYSES[i],
+          keyRequirements: AI_ANALYSES[i].keyRequirements,
+          eligibilityCriteria: AI_ANALYSES[i].eligibilityCriteria,
+          risks: AI_ANALYSES[i].risks,
+          opportunities: AI_ANALYSES[i].opportunities,
+          redFlags: AI_ANALYSES[i].redFlags,
+          relevanceTags: AI_ANALYSES[i].relevanceTags,
+          requiredDocs: AI_ANALYSES[i].requiredDocs,
+        });
+      }
+      logger.info("Seeded fallback AI analyses");
+    }
   }
-  logger.info("Seeded AI analyses");
 
   // Seed scraper logs
   const sources = ["ejn", "reference", "un"];

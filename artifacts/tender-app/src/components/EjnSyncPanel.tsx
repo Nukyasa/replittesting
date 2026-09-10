@@ -19,7 +19,7 @@ export function EjnSyncPanel() {
     refetchInterval: query => query.state.data?.isRunning ? 2500 : 30000,
   });
   const trigger = useMutation({
-    mutationFn: () => customFetch("/api/scraper/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "ejn", maxPages: 1, processDocuments: true }) }),
+    mutationFn: () => customFetch("/api/scraper/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "ejn", maxPages: 5, processDocuments: true }) }),
     onSuccess: () => { previouslyRunning.current = true; void status.refetch(); toast.success("Preuzimanje s EJN portala je pokrenuto."); },
     onError: (error: Error) => { toast.error(error.message); void status.refetch(); },
   });

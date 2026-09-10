@@ -64,15 +64,23 @@ export function MarketCards({ selectedMarketId, onSelectMarket }: MarketCardsPro
   const marketList = (markets && markets.length > 0) ? markets : DEFAULT_ASA_MARKETS;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
+    <section>
+      <div className="mb-3 flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-950">Praćena tržišta</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Brzo filtrirajte tendere prema vrsti usluge.</p>
+        </div>
+        <Link href="/markets" className="hidden text-sm font-medium text-blue-700 hover:text-blue-800 sm:block">Uredi tržišta</Link>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       {/* 1. Sva naša tržišta card */}
       <div
         onClick={() => onSelectMarket(null)}
         className={cn(
-          "bg-white rounded-xl border p-3.5 cursor-pointer transition-all duration-150 flex flex-col justify-between select-none relative group",
+          "relative flex min-h-[86px] cursor-pointer select-none flex-col justify-between rounded-xl border bg-white p-4 transition-all duration-150",
           !selectedMarketId
-            ? "border-primary ring-1 ring-primary/20 bg-blue-50/20 shadow-sm"
-            : "border-gray-200 hover:border-gray-300 hover:shadow-sm"
+            ? "border-blue-300 bg-blue-50/40 shadow-sm ring-1 ring-blue-100"
+            : "border-slate-200 hover:border-slate-300 hover:shadow-sm"
         )}
       >
         <div className="flex items-start gap-2.5">
@@ -80,8 +88,8 @@ export function MarketCards({ selectedMarketId, onSelectMarket }: MarketCardsPro
             <Layers className="w-3.5 h-3.5" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="font-bold text-xs text-gray-900 truncate">Sva naša tržišta</h3>
-            <p className="text-[11px] text-gray-500 mt-0.5 truncate">
+            <h3 className="truncate text-sm font-semibold text-slate-900">Sva tržišta</h3>
+            <p className="mt-1 truncate text-xs text-slate-500">
               {isLoading
                 ? "Učitavanje..."
                 : "Osiguranje & Tehnički pregled"}
@@ -98,16 +106,16 @@ export function MarketCards({ selectedMarketId, onSelectMarket }: MarketCardsPro
             key={m.id}
             onClick={() => onSelectMarket(m)}
             className={cn(
-              "bg-white rounded-xl border p-4 cursor-pointer transition-all duration-150 flex flex-col justify-between select-none relative group",
+              "relative flex min-h-[86px] cursor-pointer select-none flex-col justify-between rounded-xl border bg-white p-4 transition-all duration-150",
               isSelected
-                ? "border-primary ring-1 ring-primary/20 bg-blue-50/20 shadow-sm"
-                : "border-gray-200 hover:border-gray-300 hover:shadow-sm"
+                ? "border-blue-300 bg-blue-50/40 shadow-sm ring-1 ring-blue-100"
+                : "border-slate-200 hover:border-slate-300 hover:shadow-sm"
             )}
           >
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-1.5 min-w-0">
-                <Star className="w-4 h-4 text-amber-500 fill-amber-400 shrink-0" />
-                <h3 className="font-bold text-sm text-gray-900 truncate">{m.name}</h3>
+                <Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-500" />
+                <h3 className="truncate text-sm font-semibold text-slate-900">{m.name}</h3>
               </div>
               <span className="text-xs font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
                 {m.cpvCodes?.length || 0}
@@ -129,9 +137,10 @@ export function MarketCards({ selectedMarketId, onSelectMarket }: MarketCardsPro
       <Link href="/markets">
         <div className="rounded-xl border border-dashed border-gray-300 hover:border-primary/50 hover:bg-gray-50/80 p-4 transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer h-full min-h-[76px] text-gray-600 hover:text-primary">
           <Plus className="w-4 h-4" />
-          <span className="text-sm font-semibold">+ Novo tržište</span>
+          <span className="text-sm font-semibold">Novo tržište</span>
         </div>
       </Link>
-    </div>
+      </div>
+    </section>
   );
 }

@@ -308,82 +308,84 @@ export default function TendersPage() {
   };
 
   return (
-    <div className="flex flex-col gap-5 p-4 lg:p-6 max-w-[1600px] mx-auto w-full">
-      {/* 1. EJN Background Sync Panel */}
-      <EjnSyncPanel />
-
-      {/* 2. ASA Scope Banner (Osiguranje & Tehnički pregled) */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white rounded-xl p-4 shadow-sm border border-blue-800/40 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3.5">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-400/30 flex items-center justify-center text-blue-300 shrink-0">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm sm:text-base font-bold tracking-tight text-white flex items-center gap-2">
-                <span>ASA Fokus djelatnosti: Osiguranje & Tehnički pregled</span>
-              </h2>
-              <span className="text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                Prilagođeni prikaz
+    <div className="flex flex-col gap-6 p-4 lg:p-7 max-w-[1600px] mx-auto w-full">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-6 p-5 sm:p-6 xl:flex-row xl:items-center xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50">
+                <ShieldCheck className="h-4 w-4" />
               </span>
+              Centar nabavki
             </div>
-            <p className="text-xs text-blue-200/80 mt-0.5">
-              Prikazuju se isključivo tenderi usmjereni na osiguranje (AO, Kasko, imovina, nezgoda, DZO) i tehničke preglede motornih vozila.
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
+              Tenderi za osiguranje i tehničke preglede
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
+              Pratite aktivne EJN objave, rokove i promjene relevantne za ASA Central na jednom mjestu.
             </p>
+            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-slate-600">
+              <span><strong className="font-semibold text-slate-950">{tabCounts?.open ?? 0}</strong> otvorenih tendera</span>
+              <span><strong className="font-semibold text-slate-950">{tabCounts?.deadline7 ?? 0}</strong> s rokom u 7 dana</span>
+              <span><strong className="font-semibold text-slate-950">{tabCounts?.all ?? 0}</strong> ukupno u odabranoj oblasti</span>
+            </div>
           </div>
-        </div>
 
-        {/* Scope Switcher Pills */}
-        <div className="flex items-center bg-black/40 p-1 rounded-lg border border-white/10 shrink-0 self-stretch sm:self-auto overflow-x-auto">
+          <div className="w-full xl:w-auto">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Oblast prikaza</p>
+            <div className="grid grid-cols-1 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-3 xl:min-w-[540px]">
           <button
             type="button"
             onClick={() => { setBusinessScope("asa"); setPage(1); }}
             className={cn(
-              "px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5",
+              "flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold transition-all sm:text-sm",
               businessScope === "asa"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-blue-200/80 hover:text-white hover:bg-white/10"
+                ? "bg-white text-blue-700 shadow-sm ring-1 ring-slate-200"
+                : "text-slate-600 hover:bg-white/60 hover:text-slate-950"
             )}
           >
-            <span>🛡️🚗</span>
-            <span>Sve (Osiguranje + Tehnički)</span>
+            <LayoutGrid className="h-4 w-4" />
+            <span>Svi tenderi</span>
           </button>
           <button
             type="button"
             onClick={() => { setBusinessScope("insurance"); setPage(1); }}
             className={cn(
-              "px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5",
+              "flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold transition-all sm:text-sm",
               businessScope === "insurance"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-blue-200/80 hover:text-white hover:bg-white/10"
+                ? "bg-white text-blue-700 shadow-sm ring-1 ring-slate-200"
+                : "text-slate-600 hover:bg-white/60 hover:text-slate-950"
             )}
           >
-            <span>🛡️</span>
-            <span>Samo Osiguranje</span>
+            <ShieldCheck className="h-4 w-4" />
+            <span>Osiguranje</span>
           </button>
           <button
             type="button"
             onClick={() => { setBusinessScope("inspection"); setPage(1); }}
             className={cn(
-              "px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5",
+              "flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold transition-all sm:text-sm",
               businessScope === "inspection"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-blue-200/80 hover:text-white hover:bg-white/10"
+                ? "bg-white text-blue-700 shadow-sm ring-1 ring-slate-200"
+                : "text-slate-600 hover:bg-white/60 hover:text-slate-950"
             )}
           >
-            <span>🚗</span>
-            <span>Samo Tehnički pregled</span>
+            <Car className="h-4 w-4" />
+            <span>Tehnički pregledi</span>
           </button>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* 3. Top Market Cards */}
       <MarketCards
         selectedMarketId={selectedMarket?.id}
         onSelectMarket={handleSelectMarket}
       />
 
-      {/* 3. Search and Quick Filter Box */}
+      <EjnSyncPanel />
+
+      {/* Search and Quick Filter Box */}
       <Card className="border-gray-200 shadow-sm bg-white overflow-hidden">
         <div className="p-4 space-y-3">
           {/* Row 1: Full-width search bar */}

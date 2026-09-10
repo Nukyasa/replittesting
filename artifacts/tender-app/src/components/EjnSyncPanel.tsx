@@ -36,26 +36,28 @@ export function EjnSyncPanel() {
     }
     previouslyRunning.current = status.data.isRunning;
   }, [status.data, client]);
-  const stateText = running ? "Preuzimanje je u toku" : ejn?.status === "failed" ? "Preuzimanje nije uspjelo" : ejn?.status === "partial" ? "Djelimično preuzeto — pregledajte napomenu" : ejn?.lastRun ? "Posljednje preuzimanje" : "Spremno za preuzimanje";
-  return <section className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 space-y-3" aria-label="Preuzimanje tendera s EJN portala">
-    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+  const stateText = running ? "Sinhronizacija je u toku" : ejn?.status === "failed" ? "Sinhronizacija nije uspjela" : ejn?.status === "partial" ? "Djelimično sinhronizovano" : ejn?.lastRun ? "Posljednja sinhronizacija" : "Spremno za sinhronizaciju";
+  return <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5" aria-label="Sinhronizacija tendera s EJN portala">
+    <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
       <div className="flex items-start gap-3">
-        <Database className="w-5 h-5 text-primary mt-1 shrink-0" />
-        <div><h1 className="font-bold text-lg text-gray-900">Tenderi javnih nabavki</h1>
-          <p className="text-sm text-gray-600">EJN portal BiH · robe, usluge i radovi · Automatska provjera svakih 15 minuta dok server radi</p>
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+          <Database className="h-5 w-5" />
+        </span>
+        <div><h2 className="text-base font-semibold text-slate-950">EJN sinhronizacija</h2>
+          <p className="mt-0.5 text-sm text-slate-600">Nova obavještenja provjeravaju se automatski svakih 15 minuta dok server radi.</p>
         </div>
       </div>
       <div className="flex gap-2 flex-wrap">
-        <Button variant="outline" asChild><a href="https://www.ejn.gov.ba/Announcement/Search" target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4 mr-2" /> EJN portal</a></Button>
-        <Button onClick={() => trigger.mutate()} disabled={!!running || status.isLoading || status.isError}><RefreshCw className={`w-4 h-4 mr-2 ${running ? "animate-spin" : ""}`} />{running ? "Preuzimanje i obrada…" : ejn?.hasMore ? "Nastavi i obradi" : "Preuzmi i obradi"}</Button>
+        <Button variant="outline" size="sm" asChild><a href="https://www.ejn.gov.ba/Announcement/Search" target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-4 w-4" /> Otvori EJN</a></Button>
+        <Button size="sm" onClick={() => trigger.mutate()} disabled={!!running || status.isLoading || status.isError}><RefreshCw className={`mr-2 h-4 w-4 ${running ? "animate-spin" : ""}`} />{running ? "Sinhronizujem…" : ejn?.hasMore ? "Nastavi sinhronizaciju" : "Sinhronizuj sada"}</Button>
       </div>
     </div>
-    <div className="text-sm text-gray-600 flex flex-wrap gap-x-4 gap-y-1" role="status" aria-live="polite">
-      <span className="font-medium">{stateText}{ejn?.lastRun && !running ? `: ${new Date(ejn.lastRun).toLocaleString("bs-BA")}` : ""}</span>
+    <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-600 sm:text-sm" role="status" aria-live="polite">
+      <span className="font-medium text-slate-700">{stateText}{ejn?.lastRun && !running ? `: ${new Date(ejn.lastRun).toLocaleString("bs-BA")}` : ""}</span>
       {ejn?.lastRun && <span>{ejn.tendersFound} obrađeno · {ejn.tendersNew ?? 0} novih · {ejn.tendersUpdated ?? 0} ažuriranih</span>}
     </div>
     {(status.isError || ejn?.lastError) && <p role="alert" className="text-sm text-amber-800 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{status.isError ? "Status preuzimanja trenutno nije dostupan. Provjerite vezu sa serverom." : ejn?.lastError}</p>}
     {warnings.length > 0 && <details className="text-xs text-amber-800"><summary className="cursor-pointer font-medium">Napomene o preuzimanju i dostupnosti dokumentacije ({warnings.length})</summary><div className="space-y-2 mt-2 max-h-48 overflow-auto">{warnings.map((warning, i) => <p key={i}>{warning}</p>)}</div></details>}
-    <p className="text-xs text-gray-500">Otvorite tender → preuzmite ili dodajte dokumentaciju → pokrenite obradu → pratite pripremu u Kanbanu. Obavještenje s portala ne zamjenjuje punu tendersku dokumentaciju.</p>
+    <p className="text-xs text-slate-500">Za pripremu ponude otvorite tender, dodajte dokumentaciju i pratite napredak u Kanbanu.</p>
   </section>;
 }

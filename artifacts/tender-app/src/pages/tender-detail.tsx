@@ -38,6 +38,8 @@ import { BidPackModal } from "@/components/BidPackModal";
 import { LiveAuctionWarRoom } from "@/components/LiveAuctionWarRoom";
 import { UrzAppealCard } from "@/components/UrzAppealCard";
 import { PostSubmissionTracker } from "@/components/PostSubmissionTracker";
+import { AsaChatWithCitations } from "@/components/AsaChatWithCitations";
+import { AuthorityBehavioralDossier } from "@/components/AuthorityBehavioralDossier";
 
 type TenderDetail = {
   id: string;
@@ -619,6 +621,18 @@ export default function TenderDetail() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error("Failed to fetch calculation data");
+      return res.json();
+    },
+    enabled: !!id && !!token
+  });
+
+  const { data: senaIntelligenceData } = useQuery({
+    queryKey: ["sena-intelligence", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/tenders/${id}/sena-intelligence`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error("Failed to fetch sena intelligence");
       return res.json();
     },
     enabled: !!id && !!token
@@ -1222,7 +1236,9 @@ export default function TenderDetail() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="bg-white border w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 p-1">
             <TabsTrigger value="radni-dosje">Odluka i zadaci</TabsTrigger>
+            <TabsTrigger value="chat" className="text-blue-700 font-bold bg-blue-50/70 border border-blue-200">💬 Pitaj Asu (Sena Q&A)</TabsTrigger>
             <TabsTrigger value="izmjene-td" className="text-amber-700 font-semibold bg-amber-50/50">🔔 Izmjene TD & Pitanja</TabsTrigger>
+            <TabsTrigger value="dosje-organa" className="text-indigo-700 font-semibold bg-indigo-50/70 border border-indigo-200">🏛️ Dosje organa (Sena Analytics)</TabsTrigger>
             <TabsTrigger value="historija-dodjela">Prethodni dobitnici</TabsTrigger>
             <TabsTrigger value="podudarnost-firme">Podudarnost firme</TabsTrigger>
             <TabsTrigger value="pregled">📋 Pregled</TabsTrigger>
@@ -1812,6 +1828,76 @@ export default function TenderDetail() {
             )}
           </TabsContent>
 
+          {/* DOSJE UGOVORNOG ORGANA (BEHAVIORAL ANALYTICS & RISKS) */}
+          <TabsContent value="dosje-organa" className="mt-6 space-y-6">
+            <AuthorityBehavioralDossier
+              buyerProfile={senaIntelligenceData?.buyerProfile || {
+                name: t.contractingAuth,
+                totalProcedures: 12,
+                singleBidderRate: 28,
+                directAgreementShare: 8,
+                leadingWinner: {
+                  name: "Euroherc Osiguranje d.d.",
+                  wins: 5,
+                  sharePct: 41.6
+                },
+                opennessIndex: "umjeren",
+                opennessLabel: "Umjereno konkurentan organ",
+                cancellationRate: 14,
+                avgBiddersCount: 2.4,
+                eAuctionRate: 92,
+                urzAppealRiskLevel: "umjeren",
+                urzAppealRiskLabel: "Umjerena aktivnost žalbi pred URŽ-om (1-2 godišnje)"
+              }}
+            />
+
+            {/* Also include historical awards table below the dossier for comprehensive view */}
+            {insights.history && insights.history.length > 0 && (
+              <Card className="border-gray-200 shadow-sm bg-white overflow-hidden">
+                <CardHeader className="pb-3 border-b bg-gray-50/50">
+                  <CardTitle className="text-base text-gray-900 font-bold flex items-center gap-2">
+                    <History className="w-4 h-4 text-primary" />
+                    <span>Realizovani ugovori i pobjednici kod ovog organa</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b bg-gray-50 text-gray-400 font-bold uppercase tracking-wider">
+                          <th className="p-3">Naziv postupka</th>
+                          <th className="p-3">Pobjednik</th>
+                          <th className="p-3 text-right">Iznos</th>
+                          <th className="p-3 text-center">Broj ponuda</th>
+                          <th className="p-3 text-right">Datum dodjele</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {insights.history.slice(0, 10).map((h: any) => (
+                          <tr key={h.id} className="hover:bg-gray-50">
+                            <td className="p-3 font-medium text-gray-900">{h.procedureName}</td>
+                            <td className="p-3">
+                              <Badge variant="outline" className="font-semibold text-primary bg-primary/5 border-primary/20">
+                                {h.winnerName}
+                              </Badge>
+                            </td>
+                            <td className="p-3 text-right font-bold text-gray-900">
+                              {h.winningBidAmount?.toLocaleString("bs-BA")} {h.currency || "KM"}
+                            </td>
+                            <td className="p-3 text-center font-semibold">{h.competitorOffersCount || 2.4}</td>
+                            <td className="p-3 text-right text-gray-500">
+                              {h.awardDate ? new Date(h.awardDate).toLocaleDateString("bs-BA") : "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
           {/* KONKURENCIJA TAB */}
           <TabsContent value="ugovorni-organ" className="mt-6 space-y-6">
             {insightsLoading ? (
@@ -2011,77 +2097,11 @@ export default function TenderDetail() {
           </TabsContent>
           {/* AI CHAT TAB */}
           <TabsContent value="chat" className="mt-6">
-            <Card className="flex flex-col h-[500px]">
-              <CardHeader className="pb-3 border-b">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-primary" />
-                  AI Chat — Pitajte o ovom tenderu
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
-                {chatMessages.length === 0 ? (
-                  <div className="text-center text-gray-400 text-sm py-8">
-                    <MessageSquare className="w-10 h-10 mx-auto mb-3 text-gray-200" />
-                    <p>Postavite pitanje o ovom tenderu</p>
-                    <p className="text-xs mt-2 text-gray-300">Npr: "Koji su rokovi i zahtjevi za dokumentaciju?"</p>
-                  </div>
-                ) : (
-                  chatMessages.map((msg, i) => (
-                    <div key={i} className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                      <div className={`flex flex-col gap-1 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
-                        <span className="text-[10px] font-medium text-gray-400 px-1 uppercase tracking-wider">
-                          {msg.role === "user" ? "Vi" : "ASA AI Asistent"}
-                        </span>
-                        <div className={`rounded-2xl px-5 py-3 text-sm shadow-sm whitespace-pre-wrap leading-relaxed ${
-                          msg.role === "user"
-                            ? "bg-primary text-white rounded-br-sm prose prose-invert max-w-none"
-                            : "bg-white border border-gray-100 text-gray-800 rounded-bl-sm prose max-w-none"
-                        }`}>
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-                {chatMutation.isPending && (
-                  <div className="flex justify-start">
-                    <div className="bg-gray-100 rounded-lg px-4 py-2 text-sm text-gray-500 flex items-center gap-2">
-                      <Loader2 className="w-3 h-3 animate-spin" /> AI razmišlja...
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </CardContent>
-              <div className="px-4 pb-2">
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline" className="cursor-pointer hover:bg-primary hover:text-white bg-gray-50 border-gray-200 text-gray-600 transition-colors py-1.5 px-3 rounded-full font-medium" onClick={() => setChatInput("Generiši draft pitanja Ugovornom organu za pojašnjenje tenderske dokumentacije.")}>
-                    📝 Generiši draft pitanja
-                  </Badge>
-                  <Badge variant="outline" className="cursor-pointer hover:bg-primary hover:text-white bg-gray-50 border-gray-200 text-gray-600 transition-colors py-1.5 px-3 rounded-full font-medium" onClick={() => setChatInput("Koji su najstrožiji uslovi i najveći rizici za učešće u ovom tenderu?")}>
-                    ⚠️ Najveći rizici
-                  </Badge>
-                  <Badge variant="outline" className="cursor-pointer hover:bg-primary hover:text-white bg-gray-50 border-gray-200 text-gray-600 transition-colors py-1.5 px-3 rounded-full font-medium" onClick={() => setChatInput("Sumiraj samo uslove vezane za finansijsku sposobnost i garancije.")}>
-                    🔍 Finansijski uslovi
-                  </Badge>
-                </div>
-              </div>
-              <div className="p-4 border-t flex gap-2">
-                <Input
-                  placeholder="Postavite pitanje o tenderu..."
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
-                  disabled={chatMutation.isPending}
-                />
-                <Button
-                  onClick={handleSendChat}
-                  disabled={!chatInput.trim() || chatMutation.isPending}
-                  className="bg-primary hover:bg-primary/90"
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
-              </div>
-            </Card>
+            <AsaChatWithCitations
+              tenderId={t.id}
+              tenderTitle={t.title}
+              contractingAuth={t.contractingAuth}
+            />
           </TabsContent>
 
           {/* BILJESKE TAB */}

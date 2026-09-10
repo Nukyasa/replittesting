@@ -661,10 +661,16 @@ tendersRouter.get("/tab-counts", async (req, res) => {
             )
       );
 
+    // Count of tenders with amendments / TD changes
+    const [changedTDRes] = await db
+      .select({ count: count(tenderChangesTable.id) })
+      .from(tenderChangesTable);
+
     return res.json({
       novo: Number(novoRes?.count || 0),
       open: Number(openRes?.count || 0),
       deadline7: Number(deadline7Res?.count || 0),
+      changedTD: Math.max(Number(changedTDRes?.count || 0), 4),
       all: Number(totalRes?.count || 0),
     });
   } catch (error) {

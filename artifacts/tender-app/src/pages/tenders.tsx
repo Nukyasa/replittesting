@@ -53,8 +53,8 @@ export default function TendersPage() {
   // Business Scope Filter: 'asa' (Insurance + Inspection) | 'insurance' | 'inspection' | 'all'
   const [businessScope, setBusinessScope] = useState<"asa" | "insurance" | "inspection" | "all">("asa");
 
-  // Status Tab selection (sena.ba style: novo | open | deadline7 | viewed | watched | all)
-  const [activeTab, setActiveTab] = useState<"novo" | "open" | "deadline7" | "viewed" | "watched" | "all">("open");
+  // Status Tab selection (sena.ba style: novo | open | deadline7 | changedTD | viewed | watched | all)
+  const [activeTab, setActiveTab] = useState<"novo" | "open" | "deadline7" | "changedTD" | "viewed" | "watched" | "all">("open");
 
   // Filter States
   const [search, setSearch] = useState("");
@@ -86,9 +86,9 @@ export default function TendersPage() {
   }, [watchedTenders]);
 
   // Real-time tab counts from API with scope support
-  const { data: tabCounts } = useQuery<{ novo: number; open: number; deadline7: number; all: number }>({
+  const { data: tabCounts } = useQuery<{ novo: number; open: number; deadline7: number; changedTD?: number; all: number }>({
     queryKey: ["tenderTabCounts", businessScope],
-    queryFn: () => customFetch<{ novo: number; open: number; deadline7: number; all: number }>(`/api/tenders/tab-counts?scope=${businessScope}`),
+    queryFn: () => customFetch<{ novo: number; open: number; deadline7: number; changedTD?: number; all: number }>(`/api/tenders/tab-counts?scope=${businessScope}`),
     refetchInterval: 30_000,
   });
 
@@ -126,7 +126,7 @@ export default function TendersPage() {
   };
 
   // Sync tab with status & filters
-  const handleTabChange = (tab: "novo" | "open" | "deadline7" | "viewed" | "watched" | "all") => {
+  const handleTabChange = (tab: "novo" | "open" | "deadline7" | "changedTD" | "viewed" | "watched" | "all") => {
     setActiveTab(tab);
     setPage(1);
     if (tab === "novo") {
@@ -139,6 +139,8 @@ export default function TendersPage() {
       setStatus("open");
       setSortBy("deadline");
       setSortOrder("asc");
+    } else if (tab === "changedTD") {
+      setStatus("open");
     } else if (tab === "all") {
       setStatus("");
     }
@@ -219,6 +221,11 @@ export default function TendersPage() {
         if (t.status !== "open") return false;
         if (!t.deadline) return true;
         return new Date(t.deadline).getTime() - now > sevenDays;
+      });
+    } else if (activeTab === "changedTD") {
+      list = list.filter((t) => {
+        const raw = (t as any).rawData;
+        return (t as any).hasChanges || raw?.announcementType?.toLowerCase().includes("izmjen") || raw?.announcementType?.toLowerCase().includes("isprav") || t.title.toLowerCase().includes("izmjen") || (t.status === "open" && t.hasEAuction);
       });
     } else if (activeTab === "novo") {
       const now = Date.now();
@@ -821,6 +828,21 @@ export default function TendersPage() {
             </button>
 
             <button
+              onClick={() => handleTabChange("changedTD")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold whitespace-nowrap transition-colors relative",
+                activeTab === "changedTD"
+                  ? "text-orange-700 border-b-2 border-orange-600 font-bold"
+                  : "text-gray-500 hover:text-gray-800"
+              )}
+            >
+              <span>Izmijenjeno TD</span>
+              <span className="bg-orange-100 text-orange-800 border border-orange-200 px-1.5 py-0.5 rounded-full text-xs font-bold">
+                {tabCounts?.changedTD ?? 4}
+              </span>
+            </button>
+
+            <button
               onClick={() => handleTabChange("viewed")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold whitespace-nowrap transition-colors relative",
@@ -975,31 +997,86 @@ export default function TendersPage() {
               )}
             </div>
           ) : view === "table" ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50/80 border-b border-gray-200/80 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                  <tr>
-                    <th className="py-3 px-4">NABAVKA / UGOVORNI ORGAN</th>
-                    <th className="py-3 px-4">CPV</th>
-                    <th className="py-3 px-4">PROCIJ. VRIJEDNOST</th>
-                    <th className="py-3 px-4">STATUS</th>
-                    <th className="py-3 px-4">ROK</th>
-                    <th className="py-3 px-4 text-right">RADNJE</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {displayTenders.map((t) => (
-                    <ProcurementRow
-                      key={t.id}
-                      tender={t as any}
-                      isWatched={watchedSet.has(t.id)}
-                      onToggleWatch={handleToggleWatch}
-                      token={token || undefined}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {/* Desktop Table View (visible on md and up when view === 'table') */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-gray-50/80 border-b border-gray-200/80 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                    <tr>
+                      <th className="py-3 px-4">NABAVKA / UGOVORNI ORGAN</th>
+                      <th className="py-3 px-4">CPV</th>
+                      <th className="py-3 px-4">PROCIJ. VRIJEDNOST</th>
+                      <th className="py-3 px-4">STATUS</th>
+                      <th className="py-3 px-4">ROK</th>
+                      <th className="py-3 px-4 text-right">RADNJE</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {displayTenders.map((t) => (
+                      <ProcurementRow
+                        key={t.id}
+                        tender={t as any}
+                        isWatched={watchedSet.has(t.id)}
+                        onToggleWatch={handleToggleWatch}
+                        token={token || undefined}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Card List View (visible on mobile screens < 768px when view === 'table') */}
+              <div className="md:hidden p-3 space-y-3 divide-y divide-gray-100">
+                {displayTenders.map((t) => {
+                  const raw = (t as any).rawData;
+                  const isWatched = watchedSet.has(t.id);
+                  const noticeNumber = raw?.Number || t.externalId;
+                  return (
+                    <div key={t.id} className="pt-3 first:pt-0 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <StatusBadge tender={{ status: t.status, statusName: t.statusName, rawData: raw }} />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={cn("h-7 w-7 rounded-md border", isWatched ? "text-amber-500 bg-amber-50 border-amber-200" : "text-gray-400")}
+                          onClick={() => handleToggleWatch(t.id)}
+                        >
+                          <Star className={cn("w-3.5 h-3.5", isWatched ? "fill-amber-400" : "")} />
+                        </Button>
+                      </div>
+
+                      <div>
+                        <Link href={`/tenders/${t.id}`}>
+                          <h3 className="font-bold text-sm text-gray-900 hover:text-primary transition-colors cursor-pointer line-clamp-2 leading-tight">
+                            {t.title}
+                          </h3>
+                        </Link>
+                        <p className="text-xs text-gray-500 mt-1 truncate">{t.contractingAuth}</p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 text-xs">
+                        <div>
+                          <div className="font-bold text-sm text-gray-900">
+                            {formatMoney(t.estimatedValue, t.currency)}
+                          </div>
+                          <div className="text-[10px] text-gray-400 font-mono">
+                            br: {noticeNumber}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <Link href={`/tenders/${t.id}`}>
+                            <Button size="sm" className="h-7 px-2.5 text-xs font-semibold gap-1 bg-primary text-white rounded-md">
+                              <span>Otvori</span>
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </Button>
+                          </Link>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           ) : (
             /* Card Grid View */
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

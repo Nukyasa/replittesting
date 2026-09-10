@@ -35,7 +35,7 @@ export interface TenderEvidence {
 }
 
 export interface AnalysisMetadata {
-  provider: "local" | "groq" | "anthropic";
+  provider: "local" | "groq" | "anthropic" | "gemini";
   status: "metadata_only" | "document_review" | "ai_review";
   documentCount: number;
   readableDocumentCount: number;

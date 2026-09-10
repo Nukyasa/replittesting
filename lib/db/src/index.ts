@@ -19,6 +19,7 @@ const hasDatabaseUrl = process.env.DATABASE_URL &&
 let pool: any = null;
 let db: any = null;
 let tablesExist = false;
+let client: PGlite | null = null;
 
 function findWorkspaceRoot(startPath: string): string | null {
   let current = startPath;
@@ -57,7 +58,7 @@ if (hasDatabaseUrl) {
   const initialMemoryMb = Number.isFinite(configuredInitialMemoryMb)
     ? Math.max(128, Math.min(256, configuredInitialMemoryMb))
     : 128;
-  const client = new PGlite(dbPath, {
+  client = new PGlite(dbPath, {
     initialMemory: initialMemoryMb * 1024 * 1024,
   });
   db = drizzlePglite(client, { schema });

@@ -109,8 +109,16 @@ async function performSync(logId: string, startedAt: Date, options: SyncOptions)
         });
         const oldRaw = (existing?.rawData ?? {}) as EjnRow;
         if (oldRaw.announcement && compareAnnouncements(item, oldRaw.announcement) < 0) { result.tendersSkipped++; continue; }
-        // A failed lot request fails the run; incomplete data must never overwrite known values.
-        const lots = (await EjnApiService.fetchProcedureLots(item.ProcedureId)).value;
+        // A broken or temporarily slow procedure must not block all other
+        // relevant tenders in the same EJN page.
+        let lots: EjnRow[];
+        try {
+          lots = (await EjnApiService.fetchProcedureLots(item.ProcedureId)).value;
+        } catch (error) {
+          warn(`Lotovi za obavještenje ${item.Number ?? item.Id} nisu preuzeti: ${error instanceof Error ? error.message : String(error)}`);
+          result.tendersSkipped++;
+          continue;
+        }
         const summary = summarizeLots(lots);
         const state = noticeStatus(item, lots, summary.deadline);
         const description = [...new Set(lots.map(lot => lot.ShortDescription).filter(value => typeof value === "string" && value.trim()))].join("; ") || item.ProcedureName;

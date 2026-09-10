@@ -17,7 +17,7 @@ services:
       - key: ADMIN_EMAIL
         value: admin@asacentral.ba
       - key: ADMIN_PASSWORD
-        value: Admin1234!
+        value: Tenderi1234
       - key: PUPPETEER_CACHE_DIR
         value: /opt/render/project/src/.cache/puppeteer
       - key: PGLITE_INITIAL_MEMORY_MB

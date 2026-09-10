@@ -13,6 +13,18 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 export class EjnApiService {
   static baseUrl = "https://open.ejn.gov.ba";
 
+  /**
+   * Keep the public EJN query narrow. Fetching every recent notice and then
+   * requesting its lots made a normal sync issue hundreds of unnecessary
+   * requests, so one slow unrelated procedure could stop the whole import.
+   */
+  static relevantNoticeFilter = [
+    "contains(tolower(ProcedureName),'osiguran')",
+    "contains(tolower(ProcedureName),'kasko')",
+    "contains(tolower(ProcedureName),'осигура')",
+    "contains(tolower(ProcedureName),'tehnički pregled')",
+  ].join(" or ");
+
   static async fetchWithRetry(url: string, options: RequestInit = {}, retries = 3): Promise<Response> {
     const attempts = Math.max(1, Math.min(5, retries));
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -48,7 +60,7 @@ export class EjnApiService {
 
   static async fetchAnnouncements(skip = 0, top = 50, lastUpdatedStr?: string, announcedThrough?: string) {
     if (!Number.isSafeInteger(skip) || skip < 0 || !Number.isSafeInteger(top) || top < 1 || top > 100) throw new Error("Neispravna EJN paginacija.");
-    const filters: string[] = [];
+    const filters: string[] = [`(${this.relevantNoticeFilter})`];
     if (lastUpdatedStr) filters.push(`LastUpdated ge ${new Date(lastUpdatedStr).toISOString()}`);
     if (announcedThrough) filters.push(`LastUpdated le ${new Date(announcedThrough).toISOString()}`);
     const query: Record<string, string> = {

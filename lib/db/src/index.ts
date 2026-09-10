@@ -293,7 +293,9 @@ if (hasDatabaseUrl) {
   }
 }
 
-if (pool || !tablesExist) {
+// Additive migrations must also run when a packaged PGlite database already
+// contains the base tables. That is the normal Render snapshot path.
+if (pool || client) {
   try {
     for (const statement of workspaceMigration.split(";").filter(part => part.trim())) {
       try {

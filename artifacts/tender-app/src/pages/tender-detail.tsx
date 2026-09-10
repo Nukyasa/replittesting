@@ -1245,6 +1245,7 @@ export default function TenderDetail() {
             <TabsTrigger value="rokovi">⏱ Rokovi</TabsTrigger>
             <TabsTrigger value="lotovi">▦ Lotovi i CPV</TabsTrigger>
             <TabsTrigger value="dokumenti">📄 Dokumenti</TabsTrigger>
+            <TabsTrigger value="kalkulator" className="text-emerald-700 font-bold bg-emerald-50/70 border border-emerald-200">🧮 Kalkulator ponude (ASA Tarife)</TabsTrigger>
             <TabsTrigger value="zjn-kontrolna">🤖 Priprema ponude</TabsTrigger>
             <TabsTrigger value="analiza">📊 Analiza</TabsTrigger>
             <TabsTrigger value="parsirano">🔍 Parsirano</TabsTrigger>

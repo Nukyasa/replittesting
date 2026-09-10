@@ -96,13 +96,65 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
-                className="w-full mt-6"
+                className="w-full mt-6 font-bold"
                 disabled={loading}
                 data-testid="button-submit"
               >
                 {loading ? "Prijava u toku..." : "Prijavi se"}
               </Button>
             </form>
+
+            <div className="mt-6 pt-4 border-t border-gray-100 space-y-2">
+              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider block text-center">
+                Brza testna prijava (1-klik):
+              </span>
+              <div className="grid grid-cols-3 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-auto py-1.5 px-1 flex flex-col items-center bg-blue-50/50 hover:bg-blue-100 text-blue-900 border-blue-200"
+                  onClick={() => {
+                    setEmail("admin@asacentral.ba");
+                    setPassword("Admin1234!");
+                    setError(null);
+                  }}
+                >
+                  <span className="font-bold">Admin</span>
+                  <span className="text-[10px] text-blue-700">IT Služba</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-auto py-1.5 px-1 flex flex-col items-center bg-emerald-50/50 hover:bg-emerald-100 text-emerald-900 border-emerald-200"
+                  onClick={() => {
+                    setEmail("nabavka@asacentral.ba");
+                    setPassword("Nabavka2026!");
+                    setError(null);
+                  }}
+                >
+                  <span className="font-bold">Nabavka</span>
+                  <span className="text-[10px] text-emerald-700">Amir K.</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-auto py-1.5 px-1 flex flex-col items-center bg-purple-50/50 hover:bg-purple-100 text-purple-900 border-purple-200"
+                  onClick={() => {
+                    setEmail("pravna@asacentral.ba");
+                    setPassword("Pravna2026!");
+                    setError(null);
+                  }}
+                >
+                  <span className="font-bold">Pravna</span>
+                  <span className="text-[10px] text-purple-700">Amra H.</span>
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 

@@ -175,7 +175,7 @@ export default function AuthorityDetailPage() {
           {tenders.length ? (
             <div className="space-y-2">
               {tenders.map((tender) => (
-                <Link key={tender.id} href={`/tenders/${tender.id}`}>
+                <Link key={tender.id} href={`/tenders/${encodeURIComponent(tender.id)}`}>
                   <div className="border rounded-lg p-4 hover:border-primary hover:bg-primary/5 transition-colors flex justify-between items-center gap-4">
                     <div>
                       <p className="font-semibold text-sm text-foreground">{tender.title}</p>

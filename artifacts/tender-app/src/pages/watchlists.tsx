@@ -190,7 +190,7 @@ export default function WatchlistsPage() {
                 <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   <div className="space-y-1">
                     <div className="text-xs text-gray-500">🏛️ {t.contractingAuth || t.contracting_auth}</div>
-                    <Link href={`/tenders/${t.id}`}>
+                    <Link href={`/tenders/${encodeURIComponent(t.id)}`}>
                       <h3 className="font-bold text-sm text-gray-900 hover:text-primary cursor-pointer">
                         {t.title}
                       </h3>
@@ -201,7 +201,7 @@ export default function WatchlistsPage() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <Link href={`/tenders/${t.id}`}>
+                    <Link href={`/tenders/${encodeURIComponent(t.id)}`}>
                       <Button size="sm" className="bg-[#005B94] text-white text-xs">
                         Dosje tendera
                         <ArrowRight className="w-3.5 h-3.5 ml-1" />

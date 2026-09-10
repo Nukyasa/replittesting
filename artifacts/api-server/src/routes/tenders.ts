@@ -763,34 +763,42 @@ tendersRouter.get("/:id", async (req, res) => {
   const { id } = req.params;
   const userId = req.user!.id;
 
-  const [tender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id as string)).limit(1);
+  // Links from older clients used the EJN/external identifier. Accept both
+  // forms and use the canonical database id for all related lookups below.
+  const [tender] = await db
+    .select()
+    .from(tendersTable)
+    .where(or(eq(tendersTable.id, id), eq(tendersTable.externalId, id)))
+    .limit(1);
   if (!tender) return res.status(404).json({ error: "Tender not found" });
+
+  const tenderId = tender.id;
 
   const [analysis] = await db
     .select()
     .from(aiAnalysisTable)
-    .where(eq(aiAnalysisTable.tenderId, id as string))
+    .where(eq(aiAnalysisTable.tenderId, tenderId))
     .limit(1);
 
-  const docs = await db.select().from(documentsTable).where(eq(documentsTable.tenderId, id as string));
+  const docs = await db.select().from(documentsTable).where(eq(documentsTable.tenderId, tenderId));
 
   const [userTender] = await db
     .select()
     .from(userTendersTable)
-    .where(and(eq(userTendersTable.tenderId, id as string), eq(userTendersTable.userId, userId)))
+    .where(and(eq(userTendersTable.tenderId, tenderId), eq(userTendersTable.userId, userId)))
     .limit(1);
 
   const changes = await db
     .select()
     .from(tenderChangesTable)
-    .where(eq(tenderChangesTable.tenderId, id as string))
+    .where(eq(tenderChangesTable.tenderId, tenderId))
     .orderBy(desc(tenderChangesTable.changedAt))
     .limit(20);
 
   const [award] = await db
     .select()
     .from(historicalAwardsTable)
-    .where(eq(historicalAwardsTable.tenderId, id as string))
+    .where(eq(historicalAwardsTable.tenderId, tenderId))
     .limit(1);
 
   let exactAward = award ?? null;
@@ -1691,4 +1699,3 @@ tendersRouter.post("/:id/extract-fleet-excel", async (req, res) => {
     return res.status(500).json({ error: "Greška pri izvozu u Excel", message: err.message });
   }
 });
-

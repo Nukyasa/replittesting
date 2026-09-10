@@ -83,7 +83,7 @@ export default function CalendarPage() {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {items.map(tender => (
-                    <Link key={tender.id} href={`/tenders/${tender.id}`}>
+                    <Link key={tender.id} href={`/tenders/${encodeURIComponent(tender.id)}`}>
                       <Card className={`cursor-pointer transition-all hover:-translate-y-1 hover:shadow-md border-gray-200 shadow-sm ${isPast ? 'opacity-70 grayscale' : 'hover:border-primary/50'}`}>
                         <CardContent className="p-4 space-y-3">
                           <div className="flex justify-between items-start gap-2">

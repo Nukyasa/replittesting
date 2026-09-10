@@ -1032,7 +1032,7 @@ export default function TendersPage() {
                       </div>
 
                       <div>
-                        <Link href={`/tenders/${t.id}`}>
+                        <Link href={`/tenders/${encodeURIComponent(t.id)}`}>
                           <h3 className="font-bold text-sm text-gray-900 hover:text-primary transition-colors cursor-pointer line-clamp-2 leading-tight">
                             {t.title}
                           </h3>
@@ -1050,7 +1050,7 @@ export default function TendersPage() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <Link href={`/tenders/${t.id}`}>
+                          <Link href={`/tenders/${encodeURIComponent(t.id)}`}>
                             <Button size="sm" className="h-7 px-2.5 text-xs font-semibold gap-1 bg-primary text-white rounded-md">
                               <span>Otvori</span>
                               <ChevronRight className="w-3.5 h-3.5" />
@@ -1088,7 +1088,7 @@ export default function TendersPage() {
                       </div>
 
                       <div>
-                        <Link href={`/tenders/${t.id}`}>
+                        <Link href={`/tenders/${encodeURIComponent(t.id)}`}>
                           <h3 className="font-bold text-sm text-gray-900 hover:text-primary transition-colors cursor-pointer line-clamp-2 leading-tight">
                             {t.title}
                           </h3>

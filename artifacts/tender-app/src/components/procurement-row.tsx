@@ -98,7 +98,7 @@ export function ProcurementRow({ tender, isWatched = false, onToggleWatch, token
       {/* 1. NABAVKA / UGOVORNI ORGAN */}
       <td className="py-3.5 px-4 align-top max-w-[480px]">
         {/* Title */}
-        <Link href={`/tenders/${tender.id}`}>
+        <Link href={`/tenders/${encodeURIComponent(tender.id)}`}>
           <div className="font-semibold text-sm text-gray-900 hover:text-primary transition-colors cursor-pointer line-clamp-2 leading-snug">
             {tender.title}
           </div>
@@ -131,7 +131,7 @@ export function ProcurementRow({ tender, isWatched = false, onToggleWatch, token
             </div>
           )}
 
-          <Link href={`/tenders/${tender.id}`}>
+          <Link href={`/tenders/${encodeURIComponent(tender.id)}`}>
             <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors cursor-pointer inline-flex items-center gap-0.5">
               ASA procjena &gt;
             </span>
@@ -222,7 +222,7 @@ export function ProcurementRow({ tender, isWatched = false, onToggleWatch, token
       {/* 6. RADNJE */}
       <td className="py-3.5 px-4 align-top text-right whitespace-nowrap">
         <div className="flex items-center justify-end gap-1.5">
-          <Link href={`/tenders/${tender.id}`}>
+          <Link href={`/tenders/${encodeURIComponent(tender.id)}`}>
             <Button
               size="sm"
               className="h-8 px-2.5 text-xs font-semibold gap-1 bg-primary text-white hover:bg-primary/90 rounded-lg shadow-none"
@@ -262,7 +262,7 @@ export function ProcurementRow({ tender, isWatched = false, onToggleWatch, token
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 bg-white border border-gray-200 shadow-xl rounded-xl p-1.5 z-50">
               <DropdownMenuItem asChild className="cursor-pointer text-sm font-medium py-2">
-                <Link href={`/tenders/${tender.id}`}>
+                <Link href={`/tenders/${encodeURIComponent(tender.id)}`}>
                   Pregled detalja nabavke
                 </Link>
               </DropdownMenuItem>

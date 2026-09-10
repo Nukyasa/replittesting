@@ -148,7 +148,7 @@ function KanbanCard({ tender }: { tender: any }) {
           ) : null}
         </div>
         <h4 className="font-semibold text-sm leading-snug text-gray-900 line-clamp-2" title={tender.title}>
-          <Link href={`/tenders/${tender.id}`} className="hover:text-primary hover:underline decoration-primary/30">
+          <Link href={`/tenders/${encodeURIComponent(tender.id)}`} className="hover:text-primary hover:underline decoration-primary/30">
             {tender.title}
           </Link>
         </h4>

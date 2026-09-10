@@ -664,7 +664,7 @@ export async function seedDatabase() {
         role: u.role,
         department: u.department,
         companyTags: ["Insurance", "IT", "Procurement"],
-      });
+      }).onConflictDoNothing();
       userIds.push(id);
       logger.info({ email: u.email }, "Seeded user");
     }

@@ -18,6 +18,7 @@ const hasDatabaseUrl = process.env.DATABASE_URL &&
 
 let pool: any = null;
 let db: any = null;
+let tablesExist = false;
 
 function findWorkspaceRoot(startPath: string): string | null {
   let current = startPath;
@@ -61,8 +62,21 @@ if (hasDatabaseUrl) {
   });
   db = drizzlePglite(client, { schema });
 
+  tablesExist = false;
   // Read and execute schema migration to create tables
   try {
+    try {
+      await client.waitReady;
+      const checkRes = await client.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'tenders' LIMIT 1;");
+      if (checkRes.rows && checkRes.rows.length > 0) {
+        tablesExist = true;
+      }
+    } catch (e) {
+      if (fs.existsSync(path.join(dbPath, "global")) || fs.existsSync(path.join(dbPath, "base"))) {
+        tablesExist = true;
+      }
+    }
+
     let sqlPath = "";
     
     // 1. Try finding workspace root first
@@ -94,24 +108,12 @@ if (hasDatabaseUrl) {
       }
     }
 
-    if (sqlPath) {
-      // Check if tables already exist to avoid WASM abort errors when running CREATE TABLE on existing relations
-      let tablesExist = false;
-      try {
-        await client.waitReady;
-        const checkRes = await client.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'users' LIMIT 1;");
-        if (checkRes.rows && checkRes.rows.length > 0) {
-          tablesExist = true;
-        }
-      } catch (e) {
-        // Tables do not exist
-      }
-
-      if (tablesExist) {
-        console.log("[DATABASE] Database tables already initialized, skipping migration execution.");
-      } else {
-        console.log(`[DATABASE] Found schema migration at: ${sqlPath}. Executing migration...`);
-        const sqlContent = fs.readFileSync(sqlPath, "utf-8");
+    if (tablesExist) {
+      console.log("[DATABASE] Database tables already initialized, skipping migration execution.");
+    } else if (sqlPath) {
+      console.log(`[DATABASE] Found schema migration at: ${sqlPath}. Executing migration...`);
+        let sqlContent = fs.readFileSync(sqlPath, "utf-8");
+        sqlContent = sqlContent.replace(/CREATE TABLE /g, "CREATE TABLE IF NOT EXISTS ");
         await client.exec(sqlContent);
         
         // Ensure the new historical_awards table is created
@@ -130,15 +132,15 @@ if (hasDatabaseUrl) {
           );
         `);
         console.log("[DATABASE] In-memory PostgreSQL schema initialized successfully!");
-      }
 
-      // Ensure new columns and profile table exist for high-value features
-      await client.exec(`
-        ALTER TABLE "tenders" ALTER COLUMN "deadline" DROP NOT NULL;
-        UPDATE "tenders" SET "category" = 'Drugo', "updated_at" = now()
-          WHERE "source" IN ('ejn', 'ejn_openapi') AND "category" = 'Osiguranje'
-          AND "raw_data"->'announcement'->>'ContractType' IN ('Goods', 'Works');
-        ALTER TABLE "tenders" ADD COLUMN IF NOT EXISTS "win_probability_pct" double precision;
+        // Ensure new columns and profile table exist for high-value features safely
+        try {
+          await client.exec(`
+          ALTER TABLE "tenders" ALTER COLUMN "deadline" DROP NOT NULL;
+          UPDATE "tenders" SET "category" = 'Drugo', "updated_at" = now()
+            WHERE "source" IN ('ejn', 'ejn_openapi') AND "category" = 'Osiguranje'
+            AND "raw_data"->'announcement'->>'ContractType' IN ('Goods', 'Works');
+          ALTER TABLE "tenders" ADD COLUMN IF NOT EXISTS "win_probability_pct" double precision;
         
         CREATE TABLE IF NOT EXISTS "contracting_authority_profiles" (
           "id" text PRIMARY KEY NOT NULL,
@@ -279,6 +281,9 @@ if (hasDatabaseUrl) {
         );
       `);
       console.log("[DATABASE] Applied custom high-value feature migrations!");
+      } catch (featureErr) {
+        console.warn("[DATABASE] Custom feature migrations notice:", featureErr);
+      }
     } else {
       console.error("[DATABASE] Could not locate the SQL migration file. Tables were not created.");
     }
@@ -287,11 +292,44 @@ if (hasDatabaseUrl) {
   }
 }
 
-await db.transaction(async (tx: any) => {
-  for (const statement of workspaceMigration.split(";").filter(part => part.trim())) {
-    await tx.execute(sql.raw(statement));
+if (pool || !tablesExist) {
+  try {
+    for (const statement of workspaceMigration.split(";").filter(part => part.trim())) {
+      try {
+        if (pool) {
+          await db.execute(sql.raw(statement));
+        } else if (client) {
+          await client.exec(statement);
+        }
+      } catch {
+        // Ignore idempotent DDL warnings (table/index/column already exists)
+      }
+    }
+  } catch (migErr) {
+    console.warn("[DATABASE] Note on workspace migrations:", migErr);
   }
-});
+}
 
-export { pool, db };
+try {
+  const docAlterations = [
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "text_pages" jsonb NOT NULL DEFAULT \'[]\';',
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "extraction_metadata" jsonb NOT NULL DEFAULT \'{}\';',
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "content_hash" text;',
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "logical_key" text;',
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "version" integer NOT NULL DEFAULT 1;',
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "previous_document_id" text;',
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "superseded_by" text;'
+  ];
+  for (const stmt of docAlterations) {
+    try {
+      if (pool) {
+        await db.execute(sql.raw(stmt));
+      } else if (client) {
+        await client.exec(stmt);
+      }
+    } catch {}
+  }
+} catch {}
+
+export { pool, db, sql };
 export * from "./schema";

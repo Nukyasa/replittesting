@@ -11,6 +11,10 @@ const dataDir = process.env.PGLITE_DATA_DIR || fileURLToPath(new URL("../.pglite
 
 if (!process.env.DATABASE_URL) {
   console.log("Initializing Render database at:", dataDir);
+  const pidFile = path.join(dataDir, "postmaster.pid");
+  if (fs.existsSync(pidFile)) {
+    try { fs.unlinkSync(pidFile); } catch {}
+  }
   const client = new PGlite(dataDir, { initialMemory: 128 * 1024 * 1024 });
   try {
     await client.waitReady;
@@ -91,6 +95,14 @@ if (!process.env.DATABASE_URL) {
         "scraped_at" timestamp DEFAULT now() NOT NULL,
         "created_at" timestamp DEFAULT now() NOT NULL
       );
+
+      ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "text_pages" jsonb NOT NULL DEFAULT '[]';
+      ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "extraction_metadata" jsonb NOT NULL DEFAULT '{}';
+      ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "content_hash" text;
+      ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "logical_key" text;
+      ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "version" integer NOT NULL DEFAULT 1;
+      ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "previous_document_id" text;
+      ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "superseded_by" text;
     `);
 
     // 3. Populate snapshot if tenders count is low
@@ -227,6 +239,31 @@ if (!process.env.DATABASE_URL) {
               d.createdAt || d.created_at ? new Date(d.createdAt || d.created_at) : new Date(),
             ]
           );
+        }
+      }
+
+      // Documents
+      if (Array.isArray(data.documents) && data.documents.length > 0) {
+        console.log(`Importing ${data.documents.length} documents...`);
+        const batchSize = 100;
+        for (let i = 0; i < data.documents.length; i += batchSize) {
+          const chunk = data.documents.slice(i, i + batchSize);
+          for (const doc of chunk) {
+            await client.query(
+              `INSERT INTO documents (id, tender_id, name, original_url, file_type, mime_type, file_size)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (id) DO NOTHING`,
+              [
+                doc.id,
+                doc.tenderId || doc.tender_id,
+                doc.name,
+                doc.originalUrl || doc.original_url || "",
+                doc.fileType || doc.file_type || "pdf",
+                doc.mimeType || doc.mime_type || "application/pdf",
+                doc.fileSize || doc.file_size || 0
+              ]
+            );
+          }
         }
       }
 

@@ -93,7 +93,24 @@ export async function chatAboutTender(
   message: string,
   history: { role: string; content: string }[],
 ) {
-  const docs: EvidenceDocument[] = await db.select().from(documentsTable).where(eq(documentsTable.tenderId, tender.id));
+  let docs: EvidenceDocument[] = [];
+  try {
+    docs = await db.select().from(documentsTable).where(eq(documentsTable.tenderId, tender.id));
+  } catch {
+    try {
+      const fallback = await db.select({
+        id: documentsTable.id,
+        tenderId: documentsTable.tenderId,
+        name: documentsTable.name,
+        originalUrl: documentsTable.originalUrl,
+        fileType: documentsTable.fileType,
+        parsedText: documentsTable.parsedText,
+      }).from(documentsTable).where(eq(documentsTable.tenderId, tender.id));
+      docs = fallback as any[];
+    } catch {
+      docs = [];
+    }
+  }
   const readable = readableDocuments(docs);
 
   // Helper za lokalno pronalaženje tačnih citata i članova iz stranica dokumenata
@@ -166,7 +183,16 @@ PODACI O TENDERU: ${JSON.stringify({
   currency: tender.currency,
   deadline: tender.deadline,
   questionsDeadline: tender.questionsDeadline,
-  hasEAuction: tender.hasEAuction
+  hasEAuction: tender.hasEAuction,
+  cpvCodes: tender.cpvCodes,
+  description: tender.description,
+  lots: tender.rawData?.lots || [],
+  summary: _analysis?.summary,
+  keyRequirements: _analysis?.keyRequirements || _analysis?.key_requirements,
+  participationConditions: _analysis?.participationConditions || _analysis?.participation_conditions,
+  eligibilityCriteria: _analysis?.eligibilityCriteria || _analysis?.eligibility_criteria,
+  awardAnalysis: _analysis?.awardAnalysis || _analysis?.award_analysis,
+  guaranteeInfo: _analysis?.guaranteeInfo || _analysis?.guarantee_info,
 })}
 DOSTUPNI DOKUMENTI (${context.truncated ? "djelimičan tekst" : "kompletan tekst"}):\n${context.text || "Nema čitljivih dokumenata."}`;
 

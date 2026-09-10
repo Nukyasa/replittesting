@@ -50,8 +50,8 @@ export default function TendersPage() {
   const [isAdvancedFiltersOpen, setIsAdvancedFiltersOpen] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
 
-  // Business Scope Filter: 'asa' (Insurance + Inspection) | 'insurance' | 'inspection' | 'all'
-  const [businessScope, setBusinessScope] = useState<"asa" | "insurance" | "inspection" | "all">("asa");
+  // Business Scope Filter: 'asa' (Insurance + Inspection) | 'insurance' | 'inspection'
+  const [businessScope, setBusinessScope] = useState<"asa" | "insurance" | "inspection">("asa");
 
   // Status Tab selection (sena.ba style: novo | open | deadline7 | changedTD | viewed | watched | all)
   const [activeTab, setActiveTab] = useState<"novo" | "open" | "deadline7" | "changedTD" | "viewed" | "watched" | "all">("open");
@@ -373,19 +373,6 @@ export default function TendersPage() {
           >
             <span>🚗</span>
             <span>Samo Tehnički pregled</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => { setBusinessScope("all"); setPage(1); }}
-            className={cn(
-              "px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5",
-              businessScope === "all"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-blue-200/60 hover:text-white hover:bg-white/10"
-            )}
-          >
-            <span>🌐</span>
-            <span>Sve nabavke (EJN)</span>
           </button>
         </div>
       </div>

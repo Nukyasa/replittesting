@@ -44,7 +44,7 @@ const upload = multer({ dest: uploadDir, limits: { fileSize: 20 * 1024 * 1024, f
 } });
 
 export function getAsaScopeCondition(scope: string = "asa") {
-  if (scope === "all") return undefined;
+  if (scope === "unfiltered") return undefined;
 
   const insuranceTitleTerms = [
     "%osiguranj%",

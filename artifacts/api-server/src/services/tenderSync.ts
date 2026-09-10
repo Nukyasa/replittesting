@@ -133,19 +133,33 @@ async function performSync(logId: string, startedAt: Date, options: SyncOptions)
         if (options.dryRun) { if (existing) result.tendersUpdated++; else result.tendersNew++; continue; }
         const tenderId = existing?.id ?? randomUUID();
 
-        const isInsurance = (record.category || "").toLowerCase().includes("osiguran")
-          || record.title.toLowerCase().includes("osiguran")
-          || record.title.toLowerCase().includes("kasko")
-          || record.cpvCodes.some(c => c.startsWith("6651") || c.startsWith("6600"));
+        const combinedText = `${record.title} ${record.description || ""} ${record.category || ""}`.toLowerCase();
+        const isInsurance = combinedText.includes("osiguran")
+          || combinedText.includes("kasko")
+          || combinedText.includes("autoodgovornost")
+          || combinedText.includes("auto-odgovornost")
+          || combinedText.includes("nezgod")
+          || combinedText.includes("dzo")
+          || combinedText.includes("životn")
+          || combinedText.includes("zivotn")
+          || record.cpvCodes.some(c => c.startsWith("6651") || c.startsWith("6600") || c.startsWith("6650"));
 
-        const isInspection = (record.category || "").toLowerCase().includes("tehničk")
-          || (record.category || "").toLowerCase().includes("tehnick")
-          || record.title.toLowerCase().includes("tehničk")
-          || record.title.toLowerCase().includes("tehnick")
-          || record.title.toLowerCase().includes("pregled vozila")
-          || record.cpvCodes.some(c => c.startsWith("7163"));
+        const isInspection = combinedText.includes("tehničk")
+          || combinedText.includes("tehnick")
+          || combinedText.includes("pregled vozila")
+          || combinedText.includes("ispitivanje vozila")
+          || combinedText.includes("homologacij")
+          || combinedText.includes("tahograf")
+          || combinedText.includes("registracij")
+          || record.cpvCodes.some(c => c.startsWith("716312") || c.startsWith("716300") || c.startsWith("716310") || c.startsWith("7163"));
 
         const isAsaCore = isInsurance || isInspection;
+
+        // Strictly ingest only insurance and technical inspection tenders as requested
+        if (!isAsaCore) {
+          result.tendersSkipped++;
+          continue;
+        }
 
         await db.transaction(async (tx: any) => {
           const authorityId = Number.isSafeInteger(item.ContractingAuthorityId) && item.ContractingAuthorityId > 0

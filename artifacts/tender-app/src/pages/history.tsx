@@ -85,7 +85,7 @@ const COMPETITOR_OPTIONS = [
 export default function HistoryPage() {
   const [search, setSearch] = useState("");
   const [selectedWinner, setSelectedWinner] = useState("all");
-  const [businessScope, setBusinessScope] = useState<"asa" | "insurance" | "inspection" | "all">("asa");
+  const [businessScope, setBusinessScope] = useState<"asa" | "insurance" | "inspection">("asa");
   const [sortBy, setSortBy] = useState("awardDate");
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [page, setPage] = useState(1);

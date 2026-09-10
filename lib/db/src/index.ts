@@ -18,8 +18,8 @@ const hasDatabaseUrl = process.env.DATABASE_URL &&
 
 let pool: any = null;
 let db: any = null;
-let tablesExist = false;
 let client: PGlite | null = null;
+let tablesExist = false;
 
 function findWorkspaceRoot(startPath: string): string | null {
   let current = startPath;

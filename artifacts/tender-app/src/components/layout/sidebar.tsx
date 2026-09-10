@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useAuthStore } from "@/hooks/use-auth";
-import { LayoutDashboard, FileText, History, BarChart3, Settings, ShieldAlert, KanbanSquare, LogOut, Calendar, Building2, SlidersHorizontal, Landmark, Users, Scale, AlertCircle, Briefcase, Bookmark, Sparkles, Radar } from "lucide-react";
+import { LayoutDashboard, FileText, History, BarChart3, Settings, ShieldAlert, KanbanSquare, LogOut, Building2, SlidersHorizontal, Landmark, Users, Scale, AlertCircle, Briefcase, Bookmark, Sparkles, Radar } from "lucide-react";
 import { useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +30,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/resolutions", label: "Rješenja URŽ", icon: Scale },
       { href: "/early-warning", label: "Rano upozorenje", icon: AlertCircle },
       { href: "/kanban", label: "Kanban", icon: KanbanSquare },
-      { href: "/calendar", label: "Kalendar", icon: Calendar },
     ]
   },
   {

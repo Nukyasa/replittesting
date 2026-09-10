@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 
-export async function generateFleetExcel(tender: any): Promise<Buffer> {
+export async function generateFleetExcel(tender: any, docs: any[] = []): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "ASA Central Tender Intelligence";
   workbook.created = new Date();
@@ -22,10 +22,20 @@ export async function generateFleetExcel(tender: any): Promise<Buffer> {
   // Informacije o tenderu
   sheet.mergeCells("A2:K2");
   const subCell = sheet.getCell("A2");
-  subCell.value = `Postupak: ${tender.title || ""} | Ugovorni organ: ${tender.contractingAuth || ""} | Broj: ${tender.externalId || "N/A"}`;
+  const estValStr = tender.estimatedValue ? ` | Proc. vrijednost: ${Number(tender.estimatedValue).toLocaleString("bs-BA")} KM` : "";
+  subCell.value = `Postupak: ${tender.title || ""} | Naručilac: ${tender.contractingAuth || ""}${estValStr} | Broj: ${tender.externalId || "N/A"}`;
   subCell.font = { name: "Arial", size: 10, italic: true, color: { argb: "FF333333" } };
   subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0F4F8" } };
   sheet.getRow(2).height = 20;
+
+  // Uputstvo za aktuare
+  sheet.mergeCells("A3:K3");
+  const noteCell = sheet.getCell("A3");
+  noteCell.value = "RADNI ŠABLON ZA AKTUARE: Model za kalkulaciju AO i Kasko premije. Prilagoditi stvarne stavke iz tenderske dokumentacije / priloga.";
+  noteCell.font = { name: "Arial", size: 9, italic: true, color: { argb: "FF78350F" } };
+  noteCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
+  noteCell.alignment = { vertical: "middle", horizontal: "center" };
+  sheet.getRow(3).height = 20;
 
   sheet.addRow([]); // Prazan red
 
@@ -109,9 +119,9 @@ export async function generateFleetExcel(tender: any): Promise<Buffer> {
     "",
     "",
     "",
-    { formula: `SUM(I5:I${4 + mockVehicles.length})` },
+    { formula: `SUM(I6:I${5 + mockVehicles.length})` },
     "",
-    { formula: `SUM(K5:K${4 + mockVehicles.length})` },
+    { formula: `SUM(K6:K${5 + mockVehicles.length})` },
   ]);
   totalRow.height = 24;
   totalRow.eachCell((cell, col) => {

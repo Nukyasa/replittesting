@@ -9,7 +9,6 @@ import TendersPage from "@/pages/tenders";
 import TenderDetailPage from "@/pages/tender-detail";
 import AnalyticsPage from "@/pages/analytics";
 import KanbanPage from "@/pages/kanban";
-import CalendarPage from "@/pages/calendar";
 import SettingsPage from "@/pages/settings";
 import AdminPage from "@/pages/admin";
 import CompanyPage from "@/pages/company";
@@ -46,7 +45,6 @@ export default function App() {
               <Route path="/early-warning" component={EarlyWarningPage} />
               <Route path="/watchlists" component={WatchlistsPage} />
               <Route path="/kanban" component={KanbanPage} />
-              <Route path="/calendar" component={CalendarPage} />
               <Route path="/analytics" component={AnalyticsPage} />
               <Route path="/company" component={CompanyPage} />
               <Route path="/provjera-firme" component={CompanyCheckPage} />

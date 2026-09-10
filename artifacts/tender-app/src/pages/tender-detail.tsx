@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import jsPDF from "jspdf";
 import { useParams, Link } from "wouter";
 import { useAuthStore } from "@/hooks/use-auth";
@@ -847,6 +847,22 @@ export default function TenderDetail() {
   const deadlineProps = getDeadlineBadgeProps(t.deadline);
   const statusProps = getStatusBadgeProps(t.status);
 
+  // Uvjetna provjera: da li se tender zaista odnosi na vozni park / motorna vozila / AO / Kasko / tehnički pregled
+  const isFleetTender = useMemo(() => {
+    if (!t) return false;
+    const text = `${t.title || ""} ${t.description || ""} ${t.category || ""}`.toLowerCase();
+    const cpvs = Array.isArray(t.cpvCodes) ? t.cpvCodes.join(" ") : "";
+    const hasFleetCpv = /(665141|665161|716312|341000)/i.test(cpvs);
+    const hasFleetKeywords = /(vozil|kasko|autoodgovornost|\bao\b|motorn|flot|tehni[čc]ki pregled|automobil)/i.test(text);
+    return hasFleetCpv || hasFleetKeywords;
+  }, [t]);
+
+  useEffect(() => {
+    if (t && !isFleetTender) {
+      setCalcType("property");
+    }
+  }, [t, isFleetTender]);
+
   const handleAnalyze = async () => {
     try {
       await analyzeTender.mutateAsync({ id });
@@ -1162,18 +1178,21 @@ export default function TenderDetail() {
               >
                 <Swords className="w-4 h-4 mr-2" /> War Room e-Aukcije
               </Button>
-              <Button 
-                variant="outline"
-                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium px-3 shadow-sm"
-                onClick={handleExtractFleet}
-                disabled={isExtractingFleet}
-              >
-                {isExtractingFleet ? (
-                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Izvoz tabele...</>
-                ) : (
-                  <><FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> Vozni park (.xlsx)</>
-                )}
-              </Button>
+              {isFleetTender && (
+                <Button 
+                  variant="outline"
+                  className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium px-3 shadow-sm"
+                  onClick={handleExtractFleet}
+                  disabled={isExtractingFleet}
+                  title="Preuzmi Excel tabelu sa specifikacijom i kalkulacijom za vozni park"
+                >
+                  {isExtractingFleet ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Izvoz tabele...</>
+                  ) : (
+                    <><FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> Vozni park (.xlsx)</>
+                  )}
+                </Button>
+              )}
               <a href={`/api/tenders/${t.id}/pdf?token=${token}`} target="_blank" rel="noopener noreferrer">
                 <Button variant="outline">
                   <ExternalLink className="w-4 h-4 mr-2" /> Originalni PDF
@@ -2273,7 +2292,23 @@ export default function TenderDetail() {
                 {calcType === "fleet" ? (
                   // FLEET INSURANCE CALCULATOR
                   <div className="space-y-4">
-                    <h4 className="font-semibold text-sm text-gray-700 border-b pb-1.5">Ulazni parametri flote</h4>
+                    <div className="flex items-center justify-between border-b pb-1.5">
+                      <h4 className="font-semibold text-sm text-gray-700">Ulazni parametri flote</h4>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50 h-7 px-2.5 shadow-sm"
+                        onClick={handleExtractFleet}
+                        disabled={isExtractingFleet}
+                        title="Preuzmi radni Excel šablon za specifikaciju i kalkulaciju flote"
+                      >
+                        {isExtractingFleet ? (
+                          <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Izvoz...</>
+                        ) : (
+                          <><FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-emerald-600" /> Preuzmi Excel (.xlsx)</>
+                        )}
+                      </Button>
+                    </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                       <div>

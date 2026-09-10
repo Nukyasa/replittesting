@@ -12,6 +12,7 @@ import {
   tenderCompetitorsTable,
   tenderCalculationsTable,
   contractingAuthorityProfilesTable,
+  tenderWorkspacesTable,
 } from "@workspace/db";
 import { eq, and, or, desc, asc, ilike, gte, lte, sql, inArray, isNull, count } from "drizzle-orm";
 import { authMiddleware } from "../middlewares/auth";
@@ -743,20 +744,77 @@ tendersRouter.get("/kanban/board", async (req, res) => {
       contractingAuth: tendersTable.contractingAuth,
       estimatedValue: tendersTable.estimatedValue,
       deadline: tendersTable.deadline,
+      category: tendersTable.category,
+      tenderType: tendersTable.tenderType,
+      hasEAuction: tendersTable.hasEAuction,
       relevanceScore: sql<number | null>`CASE WHEN ${aiAnalysisTable.participationConditions}->'_analysis'->>'scoringAvailable' = 'true' THEN ${aiAnalysisTable.relevanceScore} ELSE NULL END`,
       userStatus: userTendersTable.status,
       userPriority: userTendersTable.priority,
+      assignedTo: userTendersTable.assignedTo,
+      internalDeadline: userTendersTable.internalDeadline,
       offerAmount: userTendersTable.offerAmount,
       outcomeNote: userTendersTable.outcomeNote,
       outcomeRecordedAt: userTendersTable.outcomeRecordedAt,
+      workspaceDecision: tenderWorkspacesTable.decision,
+      workspaceOwnerId: tenderWorkspacesTable.ownerId,
     })
     .from(userTendersTable)
     .innerJoin(tendersTable, eq(userTendersTable.tenderId, tendersTable.id))
     .leftJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
+    .leftJoin(tenderWorkspacesTable, eq(tendersTable.id, tenderWorkspacesTable.tenderId))
     .where(eq(userTendersTable.userId, userId))
     .orderBy(desc(tendersTable.deadline));
 
   res.json(tenders);
+});
+
+tendersRouter.get("/kanban/available", async (req, res) => {
+  const userId = req.user!.id;
+  const q = req.query.q ? String(req.query.q).trim() : "";
+
+  try {
+    const existing = await db
+      .select({ tenderId: userTendersTable.tenderId })
+      .from(userTendersTable)
+      .where(eq(userTendersTable.userId, userId));
+
+    const existingIds = existing.map((r: any) => r.tenderId).filter(Boolean);
+
+    const whereConditions = [];
+    if (existingIds.length > 0) {
+      whereConditions.push(sql`${tendersTable.id} NOT IN (${sql.join(existingIds.map((id: string) => sql`${id}`), sql`, `)})`);
+    }
+    if (q) {
+      whereConditions.push(
+        or(
+          ilike(tendersTable.title, `%${q}%`),
+          ilike(tendersTable.contractingAuth, `%${q}%`),
+          ilike(tendersTable.externalId, `%${q}%`)
+        )
+      );
+    }
+
+    const available = await db
+      .select({
+        id: tendersTable.id,
+        externalId: tendersTable.externalId,
+        title: tendersTable.title,
+        contractingAuth: tendersTable.contractingAuth,
+        estimatedValue: tendersTable.estimatedValue,
+        deadline: tendersTable.deadline,
+        category: tendersTable.category,
+        hasEAuction: tendersTable.hasEAuction,
+      })
+      .from(tendersTable)
+      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+      .orderBy(desc(tendersTable.publicationDate))
+      .limit(30);
+
+    res.json(available);
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to fetch available tenders for kanban");
+    res.status(500).json({ error: "Greška pri pretrazi tendera" });
+  }
 });
 
 tendersRouter.get("/:id", async (req, res) => {
@@ -1681,7 +1739,8 @@ tendersRouter.post("/:id/extract-fleet-excel", async (req, res) => {
     const [tender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id as string)).limit(1);
     if (!tender) return res.status(404).json({ error: "Tender nije pronađen." });
 
-    const excelBuffer = await generateFleetExcel(tender);
+    const docs = await db.select().from(documentsTable).where(eq(documentsTable.tenderId, id as string));
+    const excelBuffer = await generateFleetExcel(tender, docs);
     const safeTitle = (tender.title || "Vozni_park").slice(0, 30).replace(/[^a-zA-Z0-9]/g, "_");
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="Specifikacija_Vozila_${safeTitle}.xlsx"`);

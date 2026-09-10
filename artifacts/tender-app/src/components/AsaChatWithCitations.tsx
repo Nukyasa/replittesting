@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
+import { customFetch } from "@workspace/api-client-react";
 
 interface AsaChatWithCitationsProps {
   tenderId: string;
@@ -69,29 +70,31 @@ export function AsaChatWithCitations({ tenderId, tenderTitle, contractingAuth }:
     setIsLoading(true);
 
     try {
-      const token = localStorage.getItem("token") || "";
-      const res = await fetch(`/api/tenders/${tenderId}/chat`, {
+      const data = await customFetch<{ response: string }>(`/api/tenders/${tenderId}/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
           message: text,
-          history: newHistory.slice(-6)
-        })
+          history: newHistory.slice(-6).map(m => ({ role: m.role, content: m.content })),
+        }),
       });
 
-      if (!res.ok) throw new Error("Neuspješan odgovor asistenta");
-      const data = await res.json();
+      if (!data || typeof data.response !== "string") {
+        throw new Error("Neuspješan odgovor asistenta");
+      }
       setMessages([...newHistory, { role: "assistant", content: data.response }]);
     } catch (err: any) {
+      console.error("Chat request failed:", err);
       toast.error(err.message || "Greška pri komunikaciji s asistentom");
       setMessages([
         ...newHistory,
         {
           role: "assistant",
-          content: "Došlo je do greške u komunikaciji sa serverom. Molimo pokušajte ponovo ili provjerite status tenderske dokumentacije."
+          content: err.message?.includes("401") || err.message?.includes("Unauthorized")
+            ? "Vaša sesija je istekla ili nije autorizovana. Molimo osvježite stranicu ili se ponovo prijavite na sistem."
+            : "Došlo je do greške u komunikaciji sa serverom. Molimo pokušajte ponovo ili provjerite status tenderske dokumentacije."
         }
       ]);
     } finally {

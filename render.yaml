@@ -24,3 +24,7 @@ services:
         value: "128"
       - key: DB_START_DELAY_MS
         value: "5000"
+      - key: NOTIFICATION_EMAIL
+        value: nurdin.smajic@asacentral.ba
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash

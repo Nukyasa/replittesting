@@ -619,13 +619,31 @@ export async function seedDatabase() {
       });
       logger.info({ email: productionEmail }, "Created production administrator");
     }
-    return;
+
+    // Also ensure other team members (Nabavka, Pravna) exist in production
+    for (const u of SEED_USERS.filter(su => su.email !== productionEmail)) {
+      const [existing] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, u.email)).limit(1);
+      const userHash = await bcrypt.hash(u.password, 12);
+      if (existing) {
+        await db.update(usersTable).set({ password: userHash, name: u.name, role: u.role, department: u.department }).where(eq(usersTable.id, existing.id));
+      } else {
+        await db.insert(usersTable).values({
+          id: nanoid(),
+          email: u.email,
+          password: userHash,
+          name: u.name,
+          role: u.role,
+          department: u.department,
+          companyTags: ["Insurance", "Procurement"],
+        });
+      }
+    }
   }
 
-  // Check if the local demo database is already seeded.
-  const existingUsers = await db.select().from(usersTable).limit(1);
-  if (existingUsers.length > 0) {
-    logger.info("Database already seeded, skipping");
+  // Check if tenders are already seeded.
+  const existingTenders = await db.select().from(tendersTable).limit(1);
+  if (existingTenders.length > 0) {
+    logger.info("Tenders already seeded, skipping");
     return;
   }
 

@@ -325,9 +325,9 @@ export default function TendersPage() {
               Pratite aktivne EJN objave, rokove i promjene relevantne za ASA Central na jednom mjestu.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-slate-600">
-              <span><strong className="font-semibold text-slate-950">{tabCounts?.open ?? 0}</strong> otvorenih tendera</span>
-              <span><strong className="font-semibold text-slate-950">{tabCounts?.deadline7 ?? 0}</strong> s rokom u 7 dana</span>
-              <span><strong className="font-semibold text-slate-950">{tabCounts?.all ?? 0}</strong> ukupno u odabranoj oblasti</span>
+              <span><strong className="font-semibold text-slate-950">{tabCounts?.open ?? "—"}</strong> otvorenih tendera</span>
+              <span><strong className="font-semibold text-slate-950">{tabCounts?.deadline7 ?? "—"}</strong> s rokom u 7 dana</span>
+              <span><strong className="font-semibold text-slate-950">{tabCounts?.all ?? "—"}</strong> ukupno u odabranoj oblasti</span>
             </div>
           </div>
 

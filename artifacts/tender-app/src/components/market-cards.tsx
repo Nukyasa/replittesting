@@ -72,7 +72,7 @@ export function MarketCards({ selectedMarketId, onSelectMarket }: MarketCardsPro
         </div>
         <Link href="/markets" className="hidden text-sm font-medium text-blue-700 hover:text-blue-800 sm:block">Uredi tržišta</Link>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
       {/* 1. Sva naša tržišta card */}
       <div
         onClick={() => onSelectMarket(null)}

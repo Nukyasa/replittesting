@@ -647,23 +647,27 @@ export async function seedDatabase() {
     return;
   }
 
-  // Seed local demo users.
-  const seedUsers = SEED_USERS;
+  // Seed local demo users safely if they don't already exist.
   const userIds: string[] = [];
-  for (const u of seedUsers) {
-    const hash = await bcrypt.hash(u.password, 12);
-    const id = nanoid();
-    await db.insert(usersTable).values({
-      id,
-      email: u.email,
-      password: hash,
-      name: u.name,
-      role: u.role,
-      department: u.department,
-      companyTags: ["Insurance", "IT", "Procurement"],
-    });
-    userIds.push(id);
-    logger.info({ email: u.email }, "Seeded user");
+  for (const u of SEED_USERS) {
+    const [existing] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, u.email)).limit(1);
+    if (existing) {
+      userIds.push(existing.id);
+    } else {
+      const hash = await bcrypt.hash(u.password, 12);
+      const id = nanoid();
+      await db.insert(usersTable).values({
+        id,
+        email: u.email,
+        password: hash,
+        name: u.name,
+        role: u.role,
+        department: u.department,
+        companyTags: ["Insurance", "IT", "Procurement"],
+      });
+      userIds.push(id);
+      logger.info({ email: u.email }, "Seeded user");
+    }
   }
 
   // Seed tenders

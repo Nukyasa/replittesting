@@ -283,7 +283,60 @@ tendersRouter.get("/", async (req, res) => {
       .where(where),
   ]);
 
-  const tenderIds = tenders.map((t: any) => t.id);
+  let finalTenders = tenders;
+  let finalCount = count;
+
+  if (finalCount === 0 && !search && !category && !entity && !source) {
+    const [totalInDb] = await db.select({ count: sql<number>`count(*)::int` }).from(tendersTable);
+    if ((totalInDb?.count ?? 0) === 0) {
+      try {
+        const { seedDatabase } = await import("../seed");
+        await seedDatabase();
+        const [reTenders, [{ count: reCount }]] = await Promise.all([
+          db
+            .select({
+              id: tendersTable.id,
+              externalId: tendersTable.externalId,
+              source: tendersTable.source,
+              title: tendersTable.title,
+              description: tendersTable.description,
+              contractingAuth: tendersTable.contractingAuth,
+              category: tendersTable.category,
+              cpvCodes: tendersTable.cpvCodes,
+              estimatedValue: tendersTable.estimatedValue,
+              currency: tendersTable.currency,
+              publicationDate: tendersTable.publicationDate,
+              deadline: tendersTable.deadline,
+              tenderType: tendersTable.tenderType,
+              entity: tendersTable.entity,
+              status: tendersTable.status,
+              sourceUrl: tendersTable.sourceUrl,
+              rawData: tendersTable.rawData,
+              createdAt: tendersTable.createdAt,
+              statusName: tendersTable.statusName,
+              relevanceScore: sql<number | null>`CASE WHEN ${aiAnalysisTable.participationConditions}->'_analysis'->>'scoringAvailable' = 'true' THEN ${aiAnalysisTable.relevanceScore} ELSE NULL END`,
+            })
+            .from(tendersTable)
+            .leftJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
+            .where(where)
+            .orderBy(...orderBy)
+            .limit(limitNum)
+            .offset(offset),
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(tendersTable)
+            .leftJoin(aiAnalysisTable, eq(tendersTable.id, aiAnalysisTable.tenderId))
+            .where(where),
+        ]);
+        finalTenders = reTenders;
+        finalCount = reCount;
+      } catch (err) {
+        logger.error({ err }, "On-demand seed failed");
+      }
+    }
+  }
+
+  const tenderIds = finalTenders.map((t: any) => t.id);
   let awards: any[] = [];
   if (tenderIds.length > 0) {
     awards = await db
@@ -299,7 +352,7 @@ tendersRouter.get("/", async (req, res) => {
       .where(inArray(historicalAwardsTable.tenderId, tenderIds));
   }
 
-  const tendersWithAwards = tenders.map((t: any) => {
+  const tendersWithAwards = finalTenders.map((t: any) => {
     const tenderAwards = awards.filter(a => a.tenderId === t.id);
     return {
       ...t,
@@ -309,10 +362,10 @@ tendersRouter.get("/", async (req, res) => {
 
   res.json({
     tenders: tendersWithAwards,
-    total: count,
+    total: finalCount,
     page: pageNum,
     limit: limitNum,
-    totalPages: Math.ceil(count / limitNum),
+    totalPages: Math.ceil(finalCount / limitNum),
   });
 });
 

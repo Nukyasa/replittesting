@@ -38,9 +38,17 @@ app.listen(port, (err) => {
   // Odgodi seed i cron da server odmah bude dostupan.
   const startDelayMs = Number(process.env.DB_START_DELAY_MS ?? "15000");
 
-  setTimeout(() => {
-    seedDatabase()
-      .catch((seedErr) => logger.error({ err: seedErr }, "Seed failed"));
+  setTimeout(async () => {
+    try {
+      await seedDatabase();
+      if (!isTenderSyncRunning()) {
+        logger.info("Starting initial EJN OpenAPI sync on server startup...");
+        await SyncTenders({ triggeredBy: "cron", maxPages: 2, processDocuments: false });
+        logger.info("Initial EJN OpenAPI sync on server startup completed successfully.");
+      }
+    } catch (seedErr) {
+      logger.error({ err: seedErr }, "Startup seed/sync failed");
+    }
   }, startDelayMs);
 
   // Cron registrujemo tek nakon kratkog delay-a (i dalje se ne gasi funkcionalnost).

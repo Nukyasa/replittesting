@@ -216,11 +216,10 @@ export default function TendersPage() {
       });
     } else if (activeTab === "open") {
       const now = Date.now();
-      const sevenDays = 7 * 24 * 60 * 60 * 1000;
       list = list.filter((t) => {
         if (t.status !== "open") return false;
         if (!t.deadline) return true;
-        return new Date(t.deadline).getTime() - now > sevenDays;
+        return new Date(t.deadline).getTime() >= now;
       });
     } else if (activeTab === "changedTD") {
       list = list.filter((t) => {

@@ -35,7 +35,11 @@ export class EjnApiService {
 
   static async fetchCollection(path: string, query: Record<string, string>): Promise<{ value: EjnRow[]; [key: string]: unknown }> {
     const url = new URL(path, this.baseUrl);
-    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, value);
+      }
+    }
     const response = await this.fetchWithRetry(url.toString(), { headers: { Accept: "application/json" } });
     const data = await response.json() as { value?: EjnRow[] };
     if (!data || !Array.isArray(data.value)) throw new Error(`EJN API ${path}: odgovor ne sadrži očekivanu listu podataka.`);
@@ -47,9 +51,15 @@ export class EjnApiService {
     const filters: string[] = [];
     if (lastUpdatedStr) filters.push(`LastUpdated ge ${new Date(lastUpdatedStr).toISOString()}`);
     if (announcedThrough) filters.push(`LastUpdated le ${new Date(announcedThrough).toISOString()}`);
-    return this.fetchCollection("/AnnouncementProcedureNotices", {
-      "$skip": String(skip), "$top": String(top), "$orderby": "Announced desc,LastUpdated desc,Id desc", "$filter": filters.join(" and "),
-    });
+    const query: Record<string, string> = {
+      "$skip": String(skip),
+      "$top": String(top),
+      "$orderby": "Announced desc,LastUpdated desc,Id desc",
+    };
+    if (filters.length > 0) {
+      query["$filter"] = filters.join(" and ");
+    }
+    return this.fetchCollection("/AnnouncementProcedureNotices", query);
   }
 
   static async fetchProcedureLots(procedureId: number) {

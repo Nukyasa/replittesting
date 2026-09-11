@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import jsPDF from "jspdf";
-import { useParams, Link } from "wouter";
+import { useParams, useRoute, Link } from "wouter";
 import { useAuthStore } from "@/hooks/use-auth";
 import {
   useGetTender, useAnalyzeTender, useChatWithTender,
@@ -518,10 +518,11 @@ function formatChangeValue(field: string, value: string | null | undefined): str
 export default function TenderDetail() {
   const { token } = useAuthStore();
   const params = useParams();
-  const id = params.id!;
+  const [, routeParams] = useRoute("/tenders/:id");
+  const id = (params?.id || routeParams?.id || "") as string;
   const queryClient = useQueryClient();
 
-  const { data: tender, isLoading } = useGetTender(id, {
+  const { data: tender, isLoading, isError, error, refetch } = useGetTender(id, {
     query: { enabled: !!id, queryKey: getGetTenderQueryKey(id) },
   });
 
@@ -846,6 +847,22 @@ export default function TenderDetail() {
         <Skeleton className="h-8 w-1/3" />
         <Skeleton className="h-6 w-1/2" />
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-12 text-center max-w-lg mx-auto">
+        <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+        <h2 className="text-lg font-semibold text-gray-800">Greška pri učitavanju tendera</h2>
+        <p className="text-sm text-gray-500 mt-2">
+          {(error as any)?.message || "Došlo je do greške prilikom dohvatanja podataka o tenderu."}
+        </p>
+        <div className="flex justify-center gap-3 mt-6">
+          <Button variant="outline" onClick={() => refetch()}>Pokušaj ponovo</Button>
+          <Link href="/tenders"><Button>Nazad na listu</Button></Link>
+        </div>
       </div>
     );
   }

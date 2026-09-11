@@ -321,7 +321,15 @@ try {
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "logical_key" text;',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "version" integer NOT NULL DEFAULT 1;',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "previous_document_id" text;',
-    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "superseded_by" text;'
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "superseded_by" text;',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "batch_id" text;',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "status" text NOT NULL DEFAULT \'running\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "steps" jsonb NOT NULL DEFAULT \'[]\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "errors" jsonb NOT NULL DEFAULT \'[]\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "duration_ms" integer;',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "triggered_by" text NOT NULL DEFAULT \'cron\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "created_at" timestamp NOT NULL DEFAULT now();',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "completed_at" timestamp;'
   ];
   for (const stmt of docAlterations) {
     try {

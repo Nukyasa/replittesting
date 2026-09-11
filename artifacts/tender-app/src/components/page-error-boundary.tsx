@@ -3,13 +3,13 @@ import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type Props = { children: ReactNode };
-type State = { hasError: boolean };
+type State = { hasError: boolean; error: Error | null };
 
 export class PageErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+  state: State = { hasError: false, error: null };
 
-  static getDerivedStateFromError(): State {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -29,6 +29,11 @@ export class PageErrorBoundary extends Component<Props, State> {
           <p className="mt-2 text-sm leading-6 text-slate-600">
             Osvježite stranicu i pokušajte ponovo. Ako je tender uklonjen, vratite se na listu tendera.
           </p>
+          {this.state.error?.message && (
+            <div className="mt-4 p-3 rounded-lg bg-red-50 border border-red-100 text-left text-xs font-mono text-red-700 max-h-32 overflow-auto">
+              {this.state.error.message}
+            </div>
+          )}
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <Button variant="outline" onClick={() => window.history.back()}>
               <ArrowLeft className="mr-2 h-4 w-4" />

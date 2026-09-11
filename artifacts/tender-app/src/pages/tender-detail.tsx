@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import jsPDF from "jspdf";
 import { useParams, useRoute, Link } from "wouter";
 import { useAuthStore } from "@/hooks/use-auth";

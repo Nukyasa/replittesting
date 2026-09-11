@@ -18,11 +18,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { formatMoney, formatDate, getScoreBadgeProps, getDeadlineBadgeProps, getStatusBadgeProps, translateTenderType, translateEntity, translateSource } from "@/lib/format";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ArrowLeft, BrainCircuit, ExternalLink, FileText, CheckCircle2, AlertTriangle,
   Send, Trash2, Plus, Bookmark, BookmarkCheck, Loader2, MessageSquare, StickyNote,
   FileDown, Clock, ShieldCheck, Gavel, ListChecks, History, Zap, ChevronRight,
-  TrendingUp, Calendar, Download, Bot, RefreshCw, X, Package, Swords, FileSpreadsheet
+  TrendingUp, Calendar, Download, Bot, RefreshCw, X, Package, Swords, FileSpreadsheet,
+  DollarSign, Building2, Check, Sparkles
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { bs } from "date-fns/locale";
@@ -663,6 +665,29 @@ export default function TenderDetail() {
     },
   });
 
+  const updateUserStatusMutation = useMutation({
+    mutationFn: async ({ status, offerAmount }: { status?: string; offerAmount?: number }) => {
+      const res = await fetch(`/api/tenders/${id}/user-status`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status, offerAmount }),
+      });
+      if (!res.ok) throw new Error("Neuspješno ažuriranje statusa tendera");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetTenderQueryKey(id) });
+      queryClient.invalidateQueries({ queryKey: ["kanbanBoard"] });
+      toast.success("Status ponude i evidencija ažurirani");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Greška pri ažuriranju statusa");
+    },
+  });
+
   const uploadDocs = useMutation({
     mutationFn: async (files: FileList | File[]) => {
       const formData = new FormData();
@@ -720,6 +745,40 @@ export default function TenderDetail() {
   
   // Tab control and declaration states
   const [activeTab, setActiveTab] = useState<string>("pregled");
+  const [selectedCategory, setSelectedCategory] = useState<string>("spec");
+  const [showAllTabs, setShowAllTabs] = useState(false);
+
+  const tabToCategoryMap: Record<string, string> = useMemo(() => ({
+    "pregled": "spec",
+    "rokovi": "spec",
+    "lotovi": "spec",
+    "dokumenti": "spec",
+    "izmjene-td": "spec",
+    
+    "radni-dosje": "ai",
+    "chat": "ai",
+    "analiza": "ai",
+    "ai-analiza": "ai",
+    "dosje-organa": "ai",
+    "historija-dodjela": "ai",
+
+    "kalkulator": "kalkulacije",
+    "podudarnost-firme": "kalkulacije",
+    "kontrola-ponude": "kalkulacije",
+    "zjn-kontrolna": "kalkulacije",
+
+    "e-aukcija": "pravno",
+    "urz-zalba": "pravno",
+    "parsirano": "pravno",
+    "biljeske": "pravno",
+  }), []);
+
+  useEffect(() => {
+    const cat = tabToCategoryMap[activeTab];
+    if (cat && cat !== selectedCategory) {
+      setSelectedCategory(cat);
+    }
+  }, [activeTab, tabToCategoryMap, selectedCategory]);
 
   // Selektuj tab na osnovu query parametara (npr. ?tab=dokumenti)
   useEffect(() => {
@@ -984,6 +1043,20 @@ export default function TenderDetail() {
     }
   };
 
+  const handleApplyAsOfficialOffer = async () => {
+    const finalAmount = calcType === "fleet" ? finalFleetPremium : finalPropPremium;
+    try {
+      await handleSaveCalculation();
+      await updateUserStatusMutation.mutateAsync({
+        offerAmount: finalAmount,
+        status: (t?.userTender?.status === "watching" || !t?.userTender?.status) ? "preparing" : t?.userTender?.status,
+      });
+      toast.success(`Zvanična ponuda postavljena na ${finalAmount.toLocaleString("bs-BA")} KM! Podaci su uvezani sa e-Aukcijom i Kanbanom.`);
+    } catch (err: any) {
+      toast.error(err.message || "Greška pri postavljanju ponude");
+    }
+  };
+
   const handleCreateNote = async () => {
     if (!noteInput.trim()) return;
     try {
@@ -1152,6 +1225,34 @@ export default function TenderDetail() {
                 {t.relevanceScore != null && (
                   <Badge className={scoreProps.className}>{scoreProps.label} ({t.relevanceScore})</Badge>
                 )}
+
+                {/* Quick Kanban Status Switcher */}
+                <div className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-300/80 rounded-lg px-2 py-0.5 shadow-2xs">
+                  <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Faza:</span>
+                  <Select
+                    value={t.userTender?.status || "watching"}
+                    onValueChange={(newVal) => updateUserStatusMutation.mutate({ status: newVal })}
+                    disabled={updateUserStatusMutation.isPending}
+                  >
+                    <SelectTrigger className="h-6 border-0 bg-transparent text-xs font-bold text-slate-900 p-0 pr-1 gap-1 focus:ring-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="watching">👁️ Pratim</SelectItem>
+                      <SelectItem value="preparing">📝 U pripremi</SelectItem>
+                      <SelectItem value="submitted">📨 Predato</SelectItem>
+                      <SelectItem value="won">🏆 Pobjeda</SelectItem>
+                      <SelectItem value="lost">❌ Gubitak</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Current calculated offer badge */}
+                {t.userTender?.offerAmount ? (
+                  <Badge className="bg-emerald-50 text-emerald-800 border border-emerald-300 font-mono text-xs px-2.5 py-0.5 font-bold shadow-2xs">
+                    💼 Zvanična ponuda: {formatMoney(t.userTender.offerAmount)}
+                  </Badge>
+                ) : null}
               </div>
               <h1 className="text-2xl font-bold text-gray-900 leading-tight">{t.title}</h1>
               <p className="text-gray-600 font-medium text-base">{t.contractingAuth} · {t.entity}</p>
@@ -1169,8 +1270,8 @@ export default function TenderDetail() {
                   <><Bookmark className="w-4 h-4 mr-2" /> Prati</>
                 )}
               </Button>
-              <Button variant="outline" onClick={generatePDF}>
-                <FileDown className="w-4 h-4 mr-2" /> PDF Sažetak
+              <Button variant="outline" onClick={generatePDF} className="border-slate-300 text-slate-700 hover:bg-slate-50 shadow-xs" title="Preuzmi sažetak dosjea za kolegij i upravu">
+                <FileDown className="w-4 h-4 mr-2 text-primary" /> Executive Sažetak (PDF)
               </Button>
               <Button 
                 className="bg-emerald-600 text-white hover:bg-emerald-700 shadow-md font-bold px-4"
@@ -1274,26 +1375,191 @@ export default function TenderDetail() {
         <SenaDecisionCard tenderId={t.id} currentDecision={t.userTender?.status} tender={t} />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="bg-white border w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 p-1">
-            <TabsTrigger value="radni-dosje">Odluka i zadaci</TabsTrigger>
-            <TabsTrigger value="chat" className="text-blue-700 font-bold bg-blue-50/70 border border-blue-200">💬 Pitaj Asu (Sena Q&A)</TabsTrigger>
-            <TabsTrigger value="izmjene-td" className="text-amber-700 font-semibold bg-amber-50/50">🔔 Izmjene TD & Pitanja</TabsTrigger>
-            <TabsTrigger value="dosje-organa" className="text-indigo-700 font-semibold bg-indigo-50/70 border border-indigo-200">🏛️ Dosje organa (Sena Analytics)</TabsTrigger>
-            <TabsTrigger value="historija-dodjela">Prethodni dobitnici</TabsTrigger>
-            <TabsTrigger value="podudarnost-firme">Podudarnost firme</TabsTrigger>
-            <TabsTrigger value="pregled">📋 Pregled</TabsTrigger>
-            <TabsTrigger value="rokovi">⏱ Rokovi</TabsTrigger>
-            <TabsTrigger value="lotovi">▦ Lotovi i CPV</TabsTrigger>
-            <TabsTrigger value="dokumenti">📄 Dokumenti</TabsTrigger>
-            <TabsTrigger value="kalkulator" className="text-emerald-700 font-bold bg-emerald-50/70 border border-emerald-200">🧮 Kalkulator ponude (ASA Tarife)</TabsTrigger>
-            <TabsTrigger value="urz-zalba" className="text-purple-700 font-bold bg-purple-50/70 border border-purple-200">⚖️ URŽ Žalba</TabsTrigger>
-            <TabsTrigger value="e-aukcija" className="text-amber-800 font-bold bg-amber-100/70 border border-amber-300">⚡ E-Aukcija Simulator</TabsTrigger>
-            <TabsTrigger value="kontrola-ponude" className="text-teal-700 font-bold bg-teal-50/70 border border-teal-200">✅ Kontrola usklađenosti</TabsTrigger>
-            <TabsTrigger value="zjn-kontrolna">🤖 Priprema ponude</TabsTrigger>
-            <TabsTrigger value="analiza">📊 Analiza</TabsTrigger>
-            <TabsTrigger value="parsirano">🔍 Parsirano</TabsTrigger>
-            <TabsTrigger value="biljeske">💬 Bilješke</TabsTrigger>
-          </TabsList>
+          {/* CATEGORIZED TAB NAVIGATION */}
+          <div className="space-y-2 mb-4">
+            <div className="bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-2 shadow-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory("spec");
+                    if (!["pregled", "rokovi", "lotovi", "dokumenti", "izmjene-td"].includes(activeTab)) {
+                      setActiveTab("pregled");
+                    }
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    selectedCategory === "spec"
+                      ? "bg-white text-slate-900 shadow-sm border border-slate-200 ring-1 ring-black/5"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                  }`}
+                >
+                  <FileText className={`w-3.5 h-3.5 ${selectedCategory === "spec" ? "text-blue-600" : "text-slate-400"}`} />
+                  <span>Dosje & Specifikacija</span>
+                  {changes.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded-md font-semibold">
+                      {changes.length} izmjena
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory("ai");
+                    if (!["radni-dosje", "chat", "analiza", "ai-analiza", "dosje-organa", "historija-dodjela"].includes(activeTab)) {
+                      setActiveTab("radni-dosje");
+                    }
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    selectedCategory === "ai"
+                      ? "bg-white text-slate-900 shadow-sm border border-slate-200 ring-1 ring-black/5"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                  }`}
+                >
+                  <BrainCircuit className={`w-3.5 h-3.5 ${selectedCategory === "ai" ? "text-purple-600" : "text-slate-400"}`} />
+                  <span>AI & Sena Strategija</span>
+                  <span className="text-[10px] px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded-md font-semibold">
+                    Sena 92%
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory("kalkulacije");
+                    if (!["kalkulator", "podudarnost-firme", "kontrola-ponude", "zjn-kontrolna"].includes(activeTab)) {
+                      setActiveTab("kalkulator");
+                    }
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    selectedCategory === "kalkulacije"
+                      ? "bg-white text-slate-900 shadow-sm border border-slate-200 ring-1 ring-black/5"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                  }`}
+                >
+                  <DollarSign className={`w-3.5 h-3.5 ${selectedCategory === "kalkulacije" ? "text-emerald-600" : "text-slate-400"}`} />
+                  <span>Kalkulacije & Ponuda</span>
+                  {t.userTender?.offerAmount ? (
+                    <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded-md font-semibold font-mono">
+                      {formatMoney(t.userTender.offerAmount)}
+                    </span>
+                  ) : null}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory("pravno");
+                    if (!["e-aukcija", "urz-zalba", "parsirano", "biljeske"].includes(activeTab)) {
+                      setActiveTab("e-aukcija");
+                    }
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    selectedCategory === "pravno"
+                      ? "bg-white text-slate-900 shadow-sm border border-slate-200 ring-1 ring-black/5"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                  }`}
+                >
+                  <Gavel className={`w-3.5 h-3.5 ${selectedCategory === "pravno" ? "text-amber-600" : "text-slate-400"}`} />
+                  <span>Pravno & E-Aukcija</span>
+                  {t.hasEAuction && (
+                    <span className="text-[10px] px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded-md font-semibold">
+                      e-Aukcija
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllTabs((prev) => !prev)}
+                className="text-[11px] text-slate-500 hover:text-slate-800 h-7 px-2.5"
+              >
+                {showAllTabs ? "Složi po kategorijama" : "Prikaži sve tabove (18)"}
+              </Button>
+            </div>
+
+            {/* SUB-TABS LIST */}
+            <div className="bg-white rounded-xl border border-slate-200/90 p-1 shadow-xs">
+              <TabsList className="bg-transparent h-auto p-0 flex flex-wrap gap-1 w-full justify-start">
+                {(showAllTabs || selectedCategory === "spec") && (
+                  <>
+                    <TabsTrigger value="pregled" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      📋 Pregled
+                    </TabsTrigger>
+                    <TabsTrigger value="rokovi" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      ⏱ Rokovi
+                    </TabsTrigger>
+                    <TabsTrigger value="lotovi" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      ▦ Lotovi i CPV
+                    </TabsTrigger>
+                    <TabsTrigger value="dokumenti" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      📄 Dokumenti ({t.documents?.length || 0})
+                    </TabsTrigger>
+                    <TabsTrigger value="izmjene-td" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-semibold text-amber-700">
+                      🔔 Izmjene TD & Pitanja
+                    </TabsTrigger>
+                  </>
+                )}
+
+                {(showAllTabs || selectedCategory === "ai") && (
+                  <>
+                    <TabsTrigger value="radni-dosje" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      📌 Odluka i zadaci
+                    </TabsTrigger>
+                    <TabsTrigger value="chat" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-bold text-blue-700 bg-blue-50/50">
+                      💬 Pitaj Asu (Sena Q&A)
+                    </TabsTrigger>
+                    <TabsTrigger value="analiza" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      📊 AI Analiza
+                    </TabsTrigger>
+                    <TabsTrigger value="dosje-organa" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-semibold text-indigo-700">
+                      🏛️ Dosje organa
+                    </TabsTrigger>
+                    <TabsTrigger value="historija-dodjela" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      🏆 Prethodni dobitnici
+                    </TabsTrigger>
+                  </>
+                )}
+
+                {(showAllTabs || selectedCategory === "kalkulacije") && (
+                  <>
+                    <TabsTrigger value="kalkulator" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-bold text-emerald-700 bg-emerald-50/50">
+                      🧮 Kalkulator ponude (ASA Tarife)
+                    </TabsTrigger>
+                    <TabsTrigger value="podudarnost-firme" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      🏢 Podudarnost firme
+                    </TabsTrigger>
+                    <TabsTrigger value="kontrola-ponude" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-bold text-teal-700">
+                      ✅ Kontrola usklađenosti
+                    </TabsTrigger>
+                    <TabsTrigger value="zjn-kontrolna" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      🤖 Priprema ponude (Bid Pack)
+                    </TabsTrigger>
+                  </>
+                )}
+
+                {(showAllTabs || selectedCategory === "pravno") && (
+                  <>
+                    <TabsTrigger value="e-aukcija" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-bold text-amber-800 bg-amber-50/50">
+                      ⚡ E-Aukcija Simulator
+                    </TabsTrigger>
+                    <TabsTrigger value="urz-zalba" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-bold text-purple-700">
+                      ⚖️ URŽ Žalba
+                    </TabsTrigger>
+                    <TabsTrigger value="parsirano" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      🔍 Parsirano
+                    </TabsTrigger>
+                    <TabsTrigger value="biljeske" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
+                      📝 Bilješke ({notesList.length})
+                    </TabsTrigger>
+                  </>
+                )}
+              </TabsList>
+            </div>
+          </div>
 
           {/* PREGLED TAB */}
           <TabsContent value="radni-dosje" className="mt-6 space-y-6">
@@ -2156,6 +2422,7 @@ export default function TenderDetail() {
               tenderEstimatedValue={t.estimatedValue || 0}
               currency={t.currency}
               hasEAuction={t.hasEAuction}
+              ourOfferAmount={t.userTender?.offerAmount || (calcType === "fleet" ? finalFleetPremium : finalPropPremium)}
             />
           </TabsContent>
 
@@ -2523,13 +2790,25 @@ export default function TenderDetail() {
                     )}
                   </div>
 
-                  <div className="mt-6 pt-4 border-t border-emerald-100">
+                  <div className="mt-6 pt-4 border-t border-emerald-100 flex flex-col sm:flex-row gap-2.5">
                     <Button 
                       onClick={handleSaveCalculation} 
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white w-full"
+                      variant="outline"
+                      className="border-emerald-300 text-emerald-800 hover:bg-emerald-100/50 flex-1 text-xs"
                     >
-                      <Plus className="w-4 h-4 mr-2" />
-                      Sačuvaj kalkulaciju u bilješke tendera
+                      <Plus className="w-3.5 h-3.5 mr-1.5" />
+                      Spremi u bilješke
+                    </Button>
+                    <Button 
+                      onClick={handleApplyAsOfficialOffer} 
+                      disabled={updateUserStatusMutation.isPending}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex-1 text-xs shadow-sm"
+                    >
+                      {updateUserStatusMutation.isPending ? (
+                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Spremanje...</>
+                      ) : (
+                        <><Check className="w-3.5 h-3.5 mr-1.5" /> Postavi kao službenu ponudu & u e-Aukciju</>
+                      )}
                     </Button>
                   </div>
                 </div>

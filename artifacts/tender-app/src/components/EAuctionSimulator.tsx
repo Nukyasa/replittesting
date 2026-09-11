@@ -20,6 +20,7 @@ interface EAuctionSimulatorProps {
   initialEstimatedValue?: number | null;
   currency?: string;
   hasEAuction?: boolean;
+  ourOfferAmount?: number | null;
 }
 
 export function EAuctionSimulator({
@@ -27,6 +28,7 @@ export function EAuctionSimulator({
   initialEstimatedValue,
   currency = "KM",
   hasEAuction = true,
+  ourOfferAmount,
 }: EAuctionSimulatorProps) {
   const effectiveValue = (tenderEstimatedValue && tenderEstimatedValue > 0)
     ? tenderEstimatedValue
@@ -40,7 +42,13 @@ export function EAuctionSimulator({
   // Target profit margin discount slider (0% to 35%)
   const [stopLossDiscount, setStopLossDiscount] = useState<number>(20);
   // Initial bid discount slider (0% to 15%)
-  const [initialDiscount, setInitialDiscount] = useState<number>(5);
+  const [initialDiscount, setInitialDiscount] = useState<number>(() => {
+    if (ourOfferAmount && baseValue > 0 && ourOfferAmount < baseValue) {
+      const disc = Math.round(((baseValue - ourOfferAmount) / baseValue) * 100);
+      return Math.min(15, Math.max(0, disc));
+    }
+    return 5;
+  });
 
   const competitorProfiles = {
     euroherc: {
@@ -129,6 +137,34 @@ export function EAuctionSimulator({
       </CardHeader>
 
       <CardContent className="p-6 space-y-6">
+        {Boolean(ourOfferAmount && ourOfferAmount > 0) && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-emerald-950">Naša kalkulisana ponuda je uvezana:</p>
+                <p className="text-sm font-extrabold text-emerald-800">{formatKm(ourOfferAmount!)}</p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (baseValue > 0 && ourOfferAmount) {
+                  const disc = Math.round(((baseValue - ourOfferAmount) / baseValue) * 100);
+                  setInitialDiscount(Math.min(15, Math.max(0, disc)));
+                }
+              }}
+              className="text-xs border-emerald-300 text-emerald-800 hover:bg-emerald-100 h-8"
+            >
+              Uskladi početni slajder
+            </Button>
+          </div>
+        )}
+
         {/* 1. Odabir glavnog konkurenta */}
         <div className="space-y-2.5">
           <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block">

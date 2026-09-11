@@ -44,7 +44,7 @@ export function EjnSyncPanel() {
           <Database className="h-5 w-5" />
         </span>
         <div><h2 className="text-base font-semibold text-slate-950">EJN sinhronizacija</h2>
-          <p className="mt-0.5 text-sm text-slate-600">Nova obavještenja provjeravaju se automatski svakih 15 minuta dok server radi.</p>
+          <p className="mt-0.5 text-sm text-slate-600">Nova obavještenja provjeravaju se svakih 15 minuta, a dostupna dokumentacija se automatski preuzima i obrađuje.</p>
         </div>
       </div>
       <div className="flex gap-2 flex-wrap">
@@ -58,6 +58,6 @@ export function EjnSyncPanel() {
     </div>
     {(status.isError || ejn?.lastError) && <p role="alert" className="text-sm text-amber-800 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{status.isError ? "Status preuzimanja trenutno nije dostupan. Provjerite vezu sa serverom." : ejn?.lastError}</p>}
     {warnings.length > 0 && <details className="text-xs text-amber-800"><summary className="cursor-pointer font-medium">Napomene o preuzimanju i dostupnosti dokumentacije ({warnings.length})</summary><div className="space-y-2 mt-2 max-h-48 overflow-auto">{warnings.map((warning, i) => <p key={i}>{warning}</p>)}</div></details>}
-    <p className="text-xs text-slate-500">Za pripremu ponude otvorite tender, dodajte dokumentaciju i pratite napredak u Kanbanu.</p>
+    <p className="text-xs text-slate-500">Ako EJN ograniči pristup prilogu, otvorite tender i dodajte dokument ručno; aplikacija će ga zatim obraditi istim postupkom.</p>
   </section>;
 }

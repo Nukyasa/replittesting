@@ -1,6 +1,7 @@
 import { Switch, Route } from "wouter";
 import { AppLayout } from "@/components/layout/app-layout";
 import { AuthRoute } from "@/components/auth-route";
+import { PageErrorBoundary } from "@/components/page-error-boundary";
 
 // Pages
 import LoginPage from "@/pages/login";
@@ -25,6 +26,14 @@ import CompanyCheckPage from "@/pages/company-check";
 import HistoryPage from "@/pages/history";
 import RenewalRadarPage from "@/pages/renewal-radar";
 
+function TenderDetailRoute() {
+  return (
+    <PageErrorBoundary>
+      <TenderDetailPage />
+    </PageErrorBoundary>
+  );
+}
+
 export default function App() {
   return (
     <Switch>
@@ -39,7 +48,7 @@ export default function App() {
               <Route path="/tenders" component={TendersPage} />
               <Route path="/renewal-radar" component={RenewalRadarPage} />
               <Route path="/history" component={HistoryPage} />
-              <Route path="/tenders/:id" component={TenderDetailPage} />
+              <Route path="/tenders/:id" component={TenderDetailRoute} />
               <Route path="/tender-projects" component={TenderProjectsPage} />
               <Route path="/resolutions" component={ResolutionsPage} />
               <Route path="/early-warning" component={EarlyWarningPage} />

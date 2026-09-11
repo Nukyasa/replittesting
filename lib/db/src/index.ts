@@ -315,13 +315,42 @@ if (pool || client) {
 
 try {
   const docAlterations = [
+    `CREATE TABLE IF NOT EXISTS "tender_parsed_data" (
+      "id" text PRIMARY KEY NOT NULL,
+      "tender_id" text NOT NULL UNIQUE REFERENCES "tenders"("id") ON DELETE CASCADE,
+      "raw_json" jsonb NOT NULL DEFAULT '{}',
+      "parsing_status" text NOT NULL DEFAULT 'PENDING',
+      "parsing_error" text,
+      "parsed_at" timestamp NOT NULL DEFAULT now(),
+      "updated_at" timestamp NOT NULL DEFAULT now()
+    );`,
+    `CREATE TABLE IF NOT EXISTS "pipeline_runs" (
+      "id" text PRIMARY KEY NOT NULL,
+      "tender_id" text REFERENCES "tenders"("id") ON DELETE CASCADE,
+      "batch_id" text,
+      "status" text NOT NULL DEFAULT 'running',
+      "steps" jsonb NOT NULL DEFAULT '[]',
+      "errors" jsonb NOT NULL DEFAULT '[]',
+      "duration_ms" integer,
+      "triggered_by" text NOT NULL DEFAULT 'cron',
+      "created_at" timestamp NOT NULL DEFAULT now(),
+      "completed_at" timestamp
+    );`,
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "text_pages" jsonb NOT NULL DEFAULT \'[]\';',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "extraction_metadata" jsonb NOT NULL DEFAULT \'{}\';',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "content_hash" text;',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "logical_key" text;',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "version" integer NOT NULL DEFAULT 1;',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "previous_document_id" text;',
-    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "superseded_by" text;'
+    'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "superseded_by" text;',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "batch_id" text;',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "status" text NOT NULL DEFAULT \'running\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "steps" jsonb NOT NULL DEFAULT \'[]\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "errors" jsonb NOT NULL DEFAULT \'[]\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "duration_ms" integer;',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "triggered_by" text NOT NULL DEFAULT \'cron\';',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "created_at" timestamp NOT NULL DEFAULT now();',
+    'ALTER TABLE "pipeline_runs" ADD COLUMN IF NOT EXISTS "completed_at" timestamp;'
   ];
   for (const stmt of docAlterations) {
     try {

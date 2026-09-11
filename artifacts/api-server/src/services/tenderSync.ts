@@ -16,6 +16,7 @@ export interface SyncOptions {
   maxPages?: number;
   dryRun?: boolean;
   processDocuments?: boolean;
+  maxDocumentTenders?: number;
 }
 export interface SyncResult {
   logId: string;
@@ -229,16 +230,21 @@ async function performSync(logId: string, startedAt: Date, options: SyncOptions)
     if (!options.dryRun && options.processDocuments !== false && processingIds.length) {
       const { TenderPreparationPipeline } = await import("./tenderPipeline");
       const pipeline = new TenderPreparationPipeline();
-      for (const tenderId of processingIds) {
-        progress(`Obrada dokumentacije: ${processingIds.indexOf(tenderId) + 1}/${processingIds.length}...`);
+      const maxDocumentTenders = Math.max(1, Math.min(10, Number(options.maxDocumentTenders ?? 3)));
+      const documentQueue = processingIds.slice(0, maxDocumentTenders);
+      for (const tenderId of documentQueue) {
+        progress(`Obrada dokumentacije: ${documentQueue.indexOf(tenderId) + 1}/${documentQueue.length}...`);
         try {
-          const pipelineResult = await pipeline.runForTender(tenderId, { notify: false });
+          const pipelineResult = await pipeline.runForTender(tenderId, { notify: false, triggeredBy: "sync" });
           for (const step of pipelineResult.steps) {
             const warnings = step.metadata?.warnings;
             if (Array.isArray(warnings) && warnings.length) warn(`Dokumentacija ${tenderId}: ${warnings.join(" ")}`);
           }
           if (!pipelineResult.success) warn(`Obrada tendera ${tenderId}: ${pipelineResult.errors.join("; ") || "nije potpuna"}. Pregledajte izvještaj obrade.`);
         } catch (error) { warn(`Obrada tendera ${tenderId}: ${String(error)}`); }
+      }
+      if (processingIds.length > documentQueue.length) {
+        warn(`${processingIds.length - documentQueue.length} tendera čeka naredni automatski ciklus obrade dokumentacije.`);
       }
     }
     if (!options.dryRun) {

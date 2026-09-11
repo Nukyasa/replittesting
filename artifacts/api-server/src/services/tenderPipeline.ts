@@ -1,6 +1,7 @@
-import { db, tendersTable, aiAnalysisTable, documentsTable, userTendersTable, notificationsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, tendersTable, aiAnalysisTable, documentsTable, userTendersTable, notificationsTable, pipelineRunsTable } from "@workspace/db";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { logger } from "../lib/logger";
 
 export type PipelineStep = "sync" | "scrape_docs" | "parse_docs" | "ai_analysis" | "calc_win_prob" | "notify" | "error";
 export interface PipelineRun {
@@ -19,7 +20,7 @@ interface PipelineResult {
   duration: number;
 }
 export class TenderPreparationPipeline {
-  async runForTender(tenderId: string, options: { skipScrape?: boolean; skipAnalysis?: boolean; notify?: boolean } = {}): Promise<PipelineResult> {
+  async runForTender(tenderId: string, options: { skipScrape?: boolean; skipAnalysis?: boolean; notify?: boolean; triggeredBy?: "manual" | "cron" | "sync" } = {}): Promise<PipelineResult> {
     const startTime = Date.now();
     // Per-call state: simultaneous manual and scheduled processing cannot mix steps.
     const steps: PipelineRun[] = [];
@@ -97,19 +98,63 @@ export class TenderPreparationPipeline {
     } catch (err: any) {
       add("error", "failed", undefined, err.message);
     }
-    return { success: errors.length === 0, steps, errors, duration: Date.now() - startTime };
+    const result = { success: errors.length === 0, steps, errors, duration: Date.now() - startTime };
+    try {
+      await db.insert(pipelineRunsTable).values({
+        id: randomUUID(), tenderId, status: result.success ? "completed" : "failed",
+        steps, errors, durationMs: result.duration, triggeredBy: options.triggeredBy ?? "manual",
+        completedAt: new Date(),
+      });
+    } catch (error) {
+      logger.warn({ error, tenderId }, "Pipeline run could not be recorded");
+    }
+    return result;
   }
 
-  static async runBatch(tenderIds: string[], concurrency = 3): Promise<Map<string, PipelineResult>> {
+  static async runBatch(tenderIds: string[], concurrency = 3, options: { notify?: boolean; triggeredBy?: "manual" | "cron" | "sync" } = {}): Promise<Map<string, PipelineResult>> {
     const results = new Map<string, PipelineResult>();
     const limit = Number.isFinite(concurrency) ? Math.max(1, Math.min(5, Math.floor(concurrency))) : 3;
     for (let i = 0; i < tenderIds.length; i += limit) {
       await Promise.allSettled(tenderIds.slice(i, i + limit).map(async id => {
-        results.set(id, await new TenderPreparationPipeline().runForTender(id));
+        results.set(id, await new TenderPreparationPipeline().runForTender(id, options));
       }));
     }
     return results;
   }
 }
 export const pipeline = new TenderPreparationPipeline();
+
+/**
+ * Gradually processes open EJN tenders that still have no downloaded file.
+ * Recent attempts are skipped so an unavailable portal document cannot starve
+ * the rest of the queue or overload a small Render instance.
+ */
+export async function processPendingEjnDocuments(limit = 3) {
+  const batchSize = Math.max(1, Math.min(10, Math.floor(limit)));
+  const candidates = await db.select({ id: tendersTable.id })
+    .from(tendersTable)
+    .where(and(
+      eq(tendersTable.status, "open"),
+      inArray(tendersTable.source, ["ejn", "ejn_openapi"]),
+      sql`NOT EXISTS (
+        SELECT 1 FROM ${documentsTable} d
+        WHERE d.tender_id = ${tendersTable.id}
+          AND d.superseded_by IS NULL
+          AND d.file_type <> 'EJN_PORTAL_LINK'
+          AND d.local_path IS NOT NULL
+          AND COALESCE(d.file_size, 0) > 0
+      )`,
+      sql`NOT EXISTS (
+        SELECT 1 FROM ${pipelineRunsTable} p
+        WHERE p.tender_id = ${tendersTable.id}
+          AND p.created_at > CURRENT_TIMESTAMP - INTERVAL '6 hours'
+      )`,
+    ))
+    .orderBy(asc(tendersTable.deadline), desc(tendersTable.updatedAt))
+    .limit(batchSize);
+
+  if (!candidates.length) return new Map<string, PipelineResult>();
+  logger.info({ count: candidates.length }, "Automatic EJN document processing started");
+  return TenderPreparationPipeline.runBatch(candidates.map((tender: { id: string }) => tender.id), 1, { triggeredBy: "cron", notify: true });
+}
 

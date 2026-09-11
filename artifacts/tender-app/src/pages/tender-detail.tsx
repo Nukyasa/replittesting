@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import jsPDF from "jspdf";
 import { useParams, Link } from "wouter";
 import { useAuthStore } from "@/hooks/use-auth";
@@ -822,6 +822,22 @@ export default function TenderDetail() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
+  const t = tender as unknown as TenderDetail | undefined;
+
+  // Keep this calculation and its effect before the loading/empty returns so
+  // React executes the same hooks on every render.
+  const fleetSearchText = `${t?.title || ""} ${t?.description || ""} ${t?.category || ""}`.toLowerCase();
+  const fleetCpvCodes = Array.isArray(t?.cpvCodes) ? t.cpvCodes.join(" ") : "";
+  const isFleetTender =
+    /(665141|665161|716312|341000)/i.test(fleetCpvCodes) ||
+    /(vozil|kasko|autoodgovornost|\bao\b|motorn|flot|tehni[čc]ki pregled|automobil)/i.test(fleetSearchText);
+
+  useEffect(() => {
+    if (t && !isFleetTender) {
+      setCalcType("property");
+    }
+  }, [t?.id, isFleetTender]);
+
   if (isLoading) {
     return (
       <div className="p-8 space-y-4">
@@ -832,7 +848,7 @@ export default function TenderDetail() {
     );
   }
 
-  if (!tender) {
+  if (!t) {
     return (
       <div className="p-12 text-center">
         <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
@@ -842,26 +858,9 @@ export default function TenderDetail() {
     );
   }
 
-  const t = tender as unknown as TenderDetail;
   const scoreProps = getScoreBadgeProps(t.relevanceScore);
   const deadlineProps = getDeadlineBadgeProps(t.deadline);
   const statusProps = getStatusBadgeProps(t.status);
-
-  // Uvjetna provjera: da li se tender zaista odnosi na vozni park / motorna vozila / AO / Kasko / tehnički pregled
-  const isFleetTender = useMemo(() => {
-    if (!t) return false;
-    const text = `${t.title || ""} ${t.description || ""} ${t.category || ""}`.toLowerCase();
-    const cpvs = Array.isArray(t.cpvCodes) ? t.cpvCodes.join(" ") : "";
-    const hasFleetCpv = /(665141|665161|716312|341000)/i.test(cpvs);
-    const hasFleetKeywords = /(vozil|kasko|autoodgovornost|\bao\b|motorn|flot|tehni[čc]ki pregled|automobil)/i.test(text);
-    return hasFleetCpv || hasFleetKeywords;
-  }, [t]);
-
-  useEffect(() => {
-    if (t && !isFleetTender) {
-      setCalcType("property");
-    }
-  }, [t, isFleetTender]);
 
   const handleAnalyze = async () => {
     try {

@@ -315,6 +315,18 @@ if (pool || client) {
 
 try {
   const docAlterations = [
+    `CREATE TABLE IF NOT EXISTS "pipeline_runs" (
+      "id" text PRIMARY KEY NOT NULL,
+      "tender_id" text REFERENCES "tenders"("id") ON DELETE CASCADE,
+      "batch_id" text,
+      "status" text NOT NULL DEFAULT 'running',
+      "steps" jsonb NOT NULL DEFAULT '[]',
+      "errors" jsonb NOT NULL DEFAULT '[]',
+      "duration_ms" integer,
+      "triggered_by" text NOT NULL DEFAULT 'cron',
+      "created_at" timestamp NOT NULL DEFAULT now(),
+      "completed_at" timestamp
+    );`,
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "text_pages" jsonb NOT NULL DEFAULT \'[]\';',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "extraction_metadata" jsonb NOT NULL DEFAULT \'{}\';',
     'ALTER TABLE "documents" ADD COLUMN IF NOT EXISTS "content_hash" text;',

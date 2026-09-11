@@ -315,6 +315,15 @@ if (pool || client) {
 
 try {
   const docAlterations = [
+    `CREATE TABLE IF NOT EXISTS "tender_parsed_data" (
+      "id" text PRIMARY KEY NOT NULL,
+      "tender_id" text NOT NULL UNIQUE REFERENCES "tenders"("id") ON DELETE CASCADE,
+      "raw_json" jsonb NOT NULL DEFAULT '{}',
+      "parsing_status" text NOT NULL DEFAULT 'PENDING',
+      "parsing_error" text,
+      "parsed_at" timestamp NOT NULL DEFAULT now(),
+      "updated_at" timestamp NOT NULL DEFAULT now()
+    );`,
     `CREATE TABLE IF NOT EXISTS "pipeline_runs" (
       "id" text PRIMARY KEY NOT NULL,
       "tender_id" text REFERENCES "tenders"("id") ON DELETE CASCADE,

@@ -525,6 +525,8 @@ export default function TenderDetail() {
     query: { enabled: !!id, queryKey: getGetTenderQueryKey(id) },
   });
 
+  const t = tender as unknown as TenderDetail | undefined;
+
   const { data: notes, isLoading: notesLoading } = useListTenderNotes(id);
 
   useEffect(() => {
@@ -822,31 +824,6 @@ export default function TenderDetail() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
-  if (isLoading) {
-    return (
-      <div className="p-8 space-y-4">
-        <Skeleton className="h-8 w-1/3" />
-        <Skeleton className="h-6 w-1/2" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
-
-  if (!tender) {
-    return (
-      <div className="p-12 text-center">
-        <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-        <h2 className="text-lg font-semibold text-gray-700">Tender nije pronađen</h2>
-        <Link href="/tenders"><Button variant="outline" className="mt-4">Nazad na listu</Button></Link>
-      </div>
-    );
-  }
-
-  const t = tender as unknown as TenderDetail;
-  const scoreProps = getScoreBadgeProps(t.relevanceScore);
-  const deadlineProps = getDeadlineBadgeProps(t.deadline);
-  const statusProps = getStatusBadgeProps(t.status);
-
   // Uvjetna provjera: da li se tender zaista odnosi na vozni park / motorna vozila / AO / Kasko / tehnički pregled
   const isFleetTender = useMemo(() => {
     if (!t) return false;
@@ -862,6 +839,30 @@ export default function TenderDetail() {
       setCalcType("property");
     }
   }, [t, isFleetTender]);
+
+  if (isLoading) {
+    return (
+      <div className="p-8 space-y-4">
+        <Skeleton className="h-8 w-1/3" />
+        <Skeleton className="h-6 w-1/2" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (!tender || !t) {
+    return (
+      <div className="p-12 text-center">
+        <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+        <h2 className="text-lg font-semibold text-gray-700">Tender nije pronađen</h2>
+        <Link href="/tenders"><Button variant="outline" className="mt-4">Nazad na listu</Button></Link>
+      </div>
+    );
+  }
+
+  const scoreProps = getScoreBadgeProps(t.relevanceScore);
+  const deadlineProps = getDeadlineBadgeProps(t.deadline);
+  const statusProps = getStatusBadgeProps(t.status);
 
   const handleAnalyze = async () => {
     try {

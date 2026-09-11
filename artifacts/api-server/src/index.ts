@@ -61,6 +61,16 @@ app.listen(port, (err) => {
       catch (err) { logger.error({ err }, "EJN scheduled sync failed"); }
     });
 
+    // Autonomni procesor: neprekidno provjerava tendere bez dokumentacije i automatski ih preuzima i obrađuje
+    cron.schedule("*/5 * * * *", async () => {
+      try {
+        const { AutonomousTenderProcessor } = await import("./services/autonomousTenderProcessor");
+        await AutonomousTenderProcessor.processPendingTenders();
+      } catch (err) {
+        logger.error({ err }, "Cron: Autonomous document processor failed");
+      }
+    });
+
     cron.schedule("0 8 * * *", async () => {
       logger.info("Cron: Sending deadline reminders");
       try {

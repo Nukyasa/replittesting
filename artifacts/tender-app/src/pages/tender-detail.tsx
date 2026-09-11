@@ -773,6 +773,27 @@ export default function TenderDetail() {
     return () => clearInterval(interval);
   }, [activeJobId, id, token, queryClient]);
 
+  // AUTONOMNI REŽIM: Ako tender još nema preuzetu dokumentaciju, automatski pokreni preuzimanje i obradu
+  const autoTriggeredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!t || !id || activeJobId || autoTriggeredRef.current === id) return;
+
+    const docsList = (t as any)?.documents || [];
+    const hasDownloaded = docsList.some(
+      (d: any) =>
+        d.fileType !== "EJN_PORTAL_LINK" &&
+        (d.fileSize > 0 || d.localPath || d.parsedText)
+    );
+
+    if (!hasDownloaded && !autoProcessDocsMutation.isPending) {
+      autoTriggeredRef.current = id;
+      const timer = setTimeout(() => {
+        autoProcessDocsMutation.mutate();
+      }, 1200);
+      return () => clearTimeout(timer);
+    }
+  }, [t, id, activeJobId]);
+
   const analyzeTender = useAnalyzeTender();
   const chatMutation = useChatWithTender();
   const createNote = useCreateTenderNote();

@@ -1364,23 +1364,120 @@ tendersRouter.post("/:id/competitors/scrape", async (req, res) => {
   }
 });
 
-tendersRouter.post(["/:id/documents/scrape", "/:id/fetch-real-docs"], async (req, res) => {
+tendersRouter.post(["/:id/documents/scrape", "/:id/fetch-real-docs", "/:id/auto-process-docs"], async (req, res) => {
   const id = String(req.params.id);
   try {
-    const [tender] = await db.select({ id: tendersTable.id }).from(tendersTable).where(eq(tendersTable.id, id)).limit(1);
+    const [tender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id)).limit(1);
     if (!tender) return res.status(404).json({ error: "Tender nije pronađen." });
     const jobId = jobManager.createJob(id);
     const scraper = new EjnDocumentScraper();
     
-    // Background execution
-    scraper.scrapeAllDocuments(id, jobId).catch(err => {
-      logger.error({ err }, "Background document scrape failed");
-      jobManager.failJob(jobId, err.message);
-    });
+    // Background execution of complete end-to-end processing pipeline
+    (async () => {
+      try {
+        jobManager.updateJob(jobId, {
+          status: "running",
+          progressMessage: "Povezujem se na EJN portal i preuzimam tendersku dokumentaciju...",
+          progressPercent: 15,
+        });
+
+        // 1. Scrape all documents (TD archive, notices, amendments) without auto-completing the job yet
+        const scrapeResult = await scraper.scrapeAllDocuments(id, jobId, 0, undefined, false);
+
+        // 2. Parse text, pages, and tabular evidence
+        jobManager.updateJob(jobId, {
+          status: "running",
+          progressMessage: "Ekstrakcija teksta, specifikacija i priloga iz preuzetih dokumenata...",
+          progressPercent: 65,
+        });
+        await triggerParsing(id).catch(err => logger.warn({ err }, "Auto-process parsing step warning"));
+
+        // 3. AI Sena Analysis
+        jobManager.updateJob(jobId, {
+          status: "running",
+          progressMessage: "Sena AI analizira uslove učešća, kriterije, garancije i diskriminatorne klauzule...",
+          progressPercent: 85,
+        });
+        const [freshTender] = await db.select().from(tendersTable).where(eq(tendersTable.id, id)).limit(1);
+        if (freshTender) {
+          try {
+            const analysis = await analyzeTender(freshTender);
+            await db.insert(aiAnalysisTable).values({ id: nanoid(), tenderId: id, ...analysis })
+              .onConflictDoUpdate({
+                target: aiAnalysisTable.tenderId,
+                set: { ...analysis, analyzedAt: new Date() },
+              });
+          } catch (aiErr: any) {
+            logger.warn({ aiErr }, "AI analysis step completed with local heuristics");
+          }
+        }
+
+        // 4. Auto-sync key tender parameters (guarantee, delivery days) to calculation table
+        try {
+          const docs = await db.query.documentsTable.findMany({
+            where: eq(documentsTable.tenderId, id)
+          });
+          let guarantee = 0;
+          let delivery = 0;
+          for (const doc of docs) {
+            if (doc.keyData) {
+              const kd = doc.keyData as any;
+              if (kd.garancija_iznos && !guarantee) {
+                const parsedVal = parseFloat(String(kd.garancija_iznos).replace(/[^\d.,]/g, '').replace(',', '.'));
+                if (!isNaN(parsedVal)) guarantee = parsedVal;
+              }
+              if (kd.rok_isporuke_dani && !delivery) {
+                const parsedDays = parseInt(String(kd.rok_isporuke_dani), 10);
+                if (!isNaN(parsedDays)) delivery = parsedDays;
+              }
+            }
+          }
+          if (guarantee > 0 || delivery > 0) {
+            const existingCalc = await db.query.tenderCalculationsTable.findFirst({
+              where: eq(tenderCalculationsTable.tenderId, id)
+            });
+            if (existingCalc) {
+              await db.update(tenderCalculationsTable).set({
+                guaranteeAmount: existingCalc.guaranteeAmount || guarantee || 0,
+                deliveryDays: existingCalc.deliveryDays || delivery || 0,
+                updatedAt: new Date()
+              }).where(eq(tenderCalculationsTable.id, existingCalc.id));
+            }
+          }
+        } catch (calcErr) {
+          logger.warn({ calcErr }, "Failed to auto-sync extracted calculation metrics");
+        }
+
+        // 5. Finalize Job
+        const docCount = scrapeResult?.summary?.total_documents ?? 0;
+        const downloadedCount = scrapeResult?.summary?.downloaded_documents ?? 0;
+        const isUnavailable = scrapeResult?.summary?.acquisition_status === "unavailable";
+        
+        const finalMsg = isUnavailable
+          ? "Obrada završena na osnovu dostupnih javnih obavještenja (direktna TD arhiva nije bila dostupna na portalu)."
+          : `Dokumentacija uspješno preuzeta (${downloadedCount || docCount} dokumenata) i kompletno AI obrađena!`;
+
+        jobManager.completeJob(jobId, {
+          ...scrapeResult,
+          parsed: true,
+          analyzed: true,
+          summaryMessage: finalMsg,
+        });
+        jobManager.updateJob(jobId, {
+          status: "completed",
+          progressMessage: finalMsg,
+          progressPercent: 100,
+        });
+
+      } catch (pipelineErr: any) {
+        logger.error({ pipelineErr }, "Background auto-process pipeline failed");
+        jobManager.failJob(jobId, pipelineErr.message || "Neuspješna obrada tenderske dokumentacije.");
+      }
+    })();
 
     return res.status(202).json({ jobId });
   } catch (err: any) {
-    logger.error({ err }, "Failed to start document scraping");
+    logger.error({ err }, "Failed to start document scraping and processing");
     return res.status(500).json({ error: "Failed to start document scraping: " + err.message });
   }
 });

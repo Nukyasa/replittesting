@@ -57,7 +57,7 @@ app.listen(port, (err) => {
     cron.schedule("*/10 * * * *", () => { void syncHistoryBatch().catch(err => logger.error({ err }, "History sync failed")); });
     cron.schedule("*/15 * * * *", async () => {
       if (isTenderSyncRunning()) return;
-      try { await SyncTenders({ triggeredBy: "cron", maxPages: 1, processDocuments: false }); }
+      try { await SyncTenders({ triggeredBy: "cron", maxPages: 1, processDocuments: true }); }
       catch (err) { logger.error({ err }, "EJN scheduled sync failed"); }
     });
 

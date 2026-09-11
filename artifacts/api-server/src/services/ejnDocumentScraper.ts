@@ -38,7 +38,7 @@ export interface DocumentAcquisitionResult {
 export class EjnDocumentScraper {
   private static running = new Map<string, Promise<DocumentAcquisitionResult>>();
 
-  async scrapeAllDocuments(tenderId: string, jobId: string, _depth = 0, _explicitEjnId?: number): Promise<DocumentAcquisitionResult> {
+  async scrapeAllDocuments(tenderId: string, jobId: string, _depth = 0, _explicitEjnId?: number, autoCompleteJob = true): Promise<DocumentAcquisitionResult> {
     jobManager.updateJob(jobId, { status: "running", progressMessage: "Pronalazim dokumente na EJN portalu...", progressPercent: 10 });
     let task = EjnDocumentScraper.running.get(tenderId);
     if (!task) {
@@ -47,13 +47,17 @@ export class EjnDocumentScraper {
     }
     try {
       const result = await task;
-      jobManager.completeJob(jobId, result);
-      jobManager.updateJob(jobId, { progressMessage: result.summary.acquisition_status === "unavailable"
-        ? "Dokumenti nisu preuzeti. Pogledajte napomene i otvorite EJN portal."
-        : `Dostupno ${result.summary.total_documents} dokumenata; novo preuzeto ${result.summary.downloaded_documents}.` });
+      if (autoCompleteJob) {
+        jobManager.completeJob(jobId, result);
+        jobManager.updateJob(jobId, { progressMessage: result.summary.acquisition_status === "unavailable"
+          ? "Dokumenti nisu preuzeti. Pogledajte napomene i otvorite EJN portal."
+          : `Dostupno ${result.summary.total_documents} dokumenata; novo preuzeto ${result.summary.downloaded_documents}.` });
+      }
       return result;
     } catch (error) {
-      jobManager.failJob(jobId, error instanceof Error ? error.message : "Preuzimanje dokumenata nije uspjelo.");
+      if (autoCompleteJob) {
+        jobManager.failJob(jobId, error instanceof Error ? error.message : "Preuzimanje dokumenata nije uspjelo.");
+      }
       throw error;
     } finally {
       if (EjnDocumentScraper.running.get(tenderId) === task) EjnDocumentScraper.running.delete(tenderId);

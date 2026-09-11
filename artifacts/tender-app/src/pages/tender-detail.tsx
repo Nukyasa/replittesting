@@ -24,7 +24,7 @@ import {
   Send, Trash2, Plus, Bookmark, BookmarkCheck, Loader2, MessageSquare, StickyNote,
   FileDown, Clock, ShieldCheck, Gavel, ListChecks, History, Zap, ChevronRight,
   TrendingUp, Calendar, Download, Bot, RefreshCw, X, Package, Swords, FileSpreadsheet,
-  DollarSign, Building2, Check, Sparkles
+  DollarSign, Building2, Check, Sparkles, FileArchive
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { bs } from "date-fns/locale";
@@ -711,26 +711,67 @@ export default function TenderDetail() {
     }
   });
 
-  const fetchRealDocs = useMutation({
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [jobProgressMsg, setJobProgressMsg] = useState<string>("");
+  const [jobPercent, setJobPercent] = useState<number>(0);
+
+  const autoProcessDocsMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/tenders/${id}/fetch-real-docs`, {
+      const res = await fetch(`/api/tenders/${id}/auto-process-docs`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}` 
         }
       });
-      if (!res.ok) throw new Error("Failed to fetch real docs");
-      return res.json();
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Neuspješno pokretanje preuzimanja.");
+      }
+      return res.json() as Promise<{ jobId: string }>;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/tenders/${id}`] });
-      toast.success("Uspješno preuzeto", { description: "Pravi PDF dokumenti i aneksi su preuzeti sa EJN-a." });
+    onSuccess: (data) => {
+      setActiveJobId(data.jobId);
+      toast.info("Pokrenuto preuzimanje sa EJN-a", {
+        description: "Sistem preuzima dokumentaciju sa portala i pokreće AI obradu.",
+      });
     },
-    onError: () => {
-      toast.error("Greška", { description: "Nije moguće preuzeti dokumentaciju sa EJN." });
+    onError: (err: any) => {
+      toast.error("Greška pri preuzimanju", { description: err.message || "Nije moguće preuzeti dokumentaciju sa EJN." });
     }
   });
+
+  useEffect(() => {
+    if (!activeJobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/tenders/${id}/documents/scrape/${activeJobId}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setJobProgressMsg(data.progressMessage || "");
+          setJobPercent(data.progressPercent || 0);
+          if (data.status === "completed") {
+            clearInterval(interval);
+            setActiveJobId(null);
+            queryClient.invalidateQueries({ queryKey: getGetTenderQueryKey(id) });
+            queryClient.invalidateQueries({ queryKey: [`/api/tenders/${id}`] });
+            queryClient.invalidateQueries({ queryKey: [`/api/tenders/${id}/documents`] });
+            queryClient.invalidateQueries({ queryKey: [`/api/tenders/${id}/calculation`] });
+            toast.success("Dokumentacija spremna!", {
+              description: data.result?.summaryMessage || "Svi dokumenti su preuzeti i AI analiza je završena."
+            });
+          } else if (data.status === "failed") {
+            clearInterval(interval);
+            setActiveJobId(null);
+            toast.error("Greška pri obradi", { description: data.error || "Došlo je do greške na portalu." });
+          }
+        }
+      } catch {}
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [activeJobId, id, token, queryClient]);
 
   const analyzeTender = useAnalyzeTender();
   const chatMutation = useChatWithTender();
@@ -1259,6 +1300,54 @@ export default function TenderDetail() {
             </div>
 
             <div className="flex gap-2 flex-wrap">
+              {/* EJN AUTOMATED TD ACQUISITION ACTION */}
+              {(() => {
+                const docsList = (t as any)?.documents || [];
+                const hasDownloaded = docsList.some((d: any) => d.fileType !== "EJN_PORTAL_LINK" && (d.fileSize > 0 || d.localPath || d.parsedText));
+                const downloadedCount = docsList.filter((d: any) => d.fileType !== "EJN_PORTAL_LINK").length;
+
+                if (activeJobId) {
+                  return (
+                    <Button
+                      disabled
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-md px-3.5 animate-pulse"
+                    >
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      {jobPercent}% {jobProgressMsg ? `(${jobProgressMsg.slice(0, 18)}...)` : "EJN obrada..."}
+                    </Button>
+                  );
+                }
+
+                if (!hasDownloaded) {
+                  return (
+                    <Button
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold shadow-md px-4"
+                      onClick={() => autoProcessDocsMutation.mutate()}
+                      disabled={autoProcessDocsMutation.isPending}
+                      title="Preuzmi arhivu tenderske dokumentacije direktno sa EJN-a i pokreni AI analizu"
+                    >
+                      <Sparkles className="w-4 h-4 mr-2 text-amber-300" />
+                      Preuzmi i obradi TD sa EJN
+                    </Button>
+                  );
+                }
+
+                return (
+                  <Button
+                    variant="outline"
+                    className="border-blue-300 text-blue-700 hover:bg-blue-50 font-medium px-3 shadow-2xs"
+                    onClick={() => {
+                      setSelectedCategory("spec");
+                      setActiveTab("dokumenti");
+                    }}
+                    title="Prikaži preuzete dokumente i tehničke specifikacije"
+                  >
+                    <FileArchive className="w-4 h-4 mr-1.5 text-blue-600" />
+                    TD Dokumenti ({downloadedCount})
+                  </Button>
+                );
+              })()}
+
               <Button
                 variant="outline"
                 onClick={handleWatch}
@@ -1582,6 +1671,65 @@ export default function TenderDetail() {
           <TabsContent value="historija-dodjela" className="mt-6"><TenderHistory tenderId={t.id} /></TabsContent>
           <TabsContent value="podudarnost-firme" className="mt-6"><CompanyMatch tenderId={t.id} /></TabsContent>
           <TabsContent value="pregled" className="mt-6 space-y-6">
+            {/* EJN AUTOMATIC TD ACQUISITION BANNER */}
+            {(() => {
+              const docsList = (t as any)?.documents || [];
+              const hasDownloaded = docsList.some((d: any) => d.fileType !== "EJN_PORTAL_LINK" && (d.fileSize > 0 || d.localPath || d.parsedText));
+              
+              if (activeJobId) {
+                return (
+                  <div className="rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-4 space-y-2 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                        <span className="text-xs font-bold text-blue-900">
+                          Automatsko preuzimanje i AI obrada u toku: {jobProgressMsg || "Komunikacija sa EJN portalom..."}
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                        {jobPercent}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-blue-200/60 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="h-2 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${Math.max(5, jobPercent)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+
+              if (!hasDownloaded) {
+                return (
+                  <div className="rounded-xl bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-slate-50 border border-blue-200/80 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-blue-600" />
+                        <h4 className="font-bold text-xs text-blue-950 uppercase tracking-wider">
+                          Tenderska dokumentacija još nije preuzeta sa EJN-a
+                        </h4>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        Preuzmite kompletnu TD (arhivu, anekse, tehničke specifikacije) jednim klikom za automatsku AI analizu članova, garancija i rokova.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => autoProcessDocsMutation.mutate()}
+                      disabled={autoProcessDocsMutation.isPending}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shrink-0 shadow-sm"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 mr-1.5 text-amber-300" />
+                      Automatski preuzmi i obradi sa EJN
+                    </Button>
+                  </div>
+                );
+              }
+
+              return null;
+            })()}
+
             {t.award && (
               <Card className="border-l-4 border-l-green-500 bg-green-50/10 shadow-sm border border-gray-200">
                 <CardHeader className="pb-2 border-b bg-green-50/30">

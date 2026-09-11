@@ -43,7 +43,7 @@ app.listen(port, (err) => {
       await seedDatabase();
       if (!isTenderSyncRunning()) {
         logger.info("Starting initial EJN OpenAPI sync on server startup...");
-        await SyncTenders({ triggeredBy: "cron", maxPages: 2, processDocuments: false });
+        await SyncTenders({ triggeredBy: "cron", maxPages: 2, processDocuments: true, maxDocumentTenders: 2 });
         logger.info("Initial EJN OpenAPI sync on server startup completed successfully.");
       }
     } catch (seedErr) {
@@ -57,8 +57,17 @@ app.listen(port, (err) => {
     cron.schedule("*/10 * * * *", () => { void syncHistoryBatch().catch(err => logger.error({ err }, "History sync failed")); });
     cron.schedule("*/15 * * * *", async () => {
       if (isTenderSyncRunning()) return;
-      try { await SyncTenders({ triggeredBy: "cron", maxPages: 1, processDocuments: false }); }
+      try { await SyncTenders({ triggeredBy: "cron", maxPages: 1, processDocuments: true, maxDocumentTenders: 2 }); }
       catch (err) { logger.error({ err }, "EJN scheduled sync failed"); }
+    });
+
+    cron.schedule("5,35 * * * *", async () => {
+      try {
+        const { processPendingEjnDocuments } = await import("./services/tenderPipeline");
+        await processPendingEjnDocuments(2);
+      } catch (err) {
+        logger.error({ err }, "Automatic EJN document processing failed");
+      }
     });
 
     cron.schedule("0 8 * * *", async () => {
@@ -85,7 +94,7 @@ app.listen(port, (err) => {
 
         if (unanalyzed.length > 0) {
           logger.info(`Pipeline: Processing ${unanalyzed.length} tenders without analysis`);
-          await TenderPreparationPipeline.runBatch(unanalyzed.map((t: any) => t.id), 3);
+          await TenderPreparationPipeline.runBatch(unanalyzed.map((t: any) => t.id), 2, { triggeredBy: "cron" });
         }
       } catch (err) {
         logger.error({ err }, "Cron: Pipeline automation failed");
@@ -106,7 +115,7 @@ app.listen(port, (err) => {
     });
 
     logger.info(
-      "Cron schedulers registered: EJN OpenAPI sync every 15min, deadlines daily at 8:00, doc scraper every 2h, pipeline every 2h, health every 6h",
+      "Cron schedulers registered: EJN sync every 15min, document queue every 30min, deadlines daily at 8:00, analysis every 2h, health every 6h",
     );
   }, startDelayMs);
 

@@ -119,7 +119,7 @@ export function TenderDocuments({
   }, [job.data, job.isError, jobId, pollStarted]);
 
   const scrape = useMutation({
-    mutationFn: () => customFetch<{ jobId: string }>(`${base}/auto-process-docs`, { method: "POST" }),
+    mutationFn: () => customFetch<{ jobId: string }>(`${base}/documents/scrape`, { method: "POST" }),
     onSuccess: (result) => {
       setPollStarted(Date.now());
       setJobId(result.jobId);
@@ -287,7 +287,28 @@ export function TenderDocuments({
         </div>
       </div>
 
-      {/* LIVE PROGRESS BANNER WHEN JOB IS ACTIVE */}
+      {/* QUICK COMPLIANCE BANNER */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-emerald-50/80 border border-emerald-200/90 rounded-xl px-4 py-3 text-xs shadow-2xs">
+        <div className="flex items-center gap-2.5 text-emerald-900">
+          <ShieldCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+          <div>
+            <span className="font-bold text-emerald-950">ZJN Kontrola usklađenosti &amp; Obavezni dokazi: </span>
+            <span className="text-emerald-800">
+              Pripremite dokaze o ličnoj sposobnosti (čl. 45), AZOBiH dozvolu, solventnost (čl. 46) i bankarsku garanciju za ozbiljnost ponude.
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const btn = document.querySelector('[data-state][value="kontrola-ponude"]') as HTMLButtonElement;
+            if (btn) btn.click();
+          }}
+          className="shrink-0 font-bold text-emerald-800 hover:text-emerald-950 bg-emerald-100/70 hover:bg-emerald-200/80 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 cursor-pointer self-start sm:self-center"
+        >
+          Otvori ZJN checklistu →
+        </button>
+      </div>
       {jobId && (
         <div className="rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-5 space-y-3">
           <div className="flex items-center justify-between">

@@ -42,7 +42,13 @@ export default function Dashboard() {
   });
 
   const { data: summary, isLoading: loadingSummary } = useGetAnalyticsSummary();
-  const { data: tendersData, isLoading: loadingTenders } = useListTenders({ limit: 8, sortBy: "publicationDate", sortOrder: "desc" });
+  const { data: tendersData, isLoading: loadingTenders } = useListTenders({ 
+    limit: 8, 
+    sortBy: "publicationDate", 
+    sortOrder: "desc",
+    status: "open",
+    scope: "asa"
+  });
   const { data: catData, isLoading: loadingCat } = useGetAnalyticsByCategory();
 
   const chartData = catData?.map((c: { category?: string; count?: number }) => ({
@@ -236,11 +242,11 @@ export default function Dashboard() {
                     <YAxis
                       dataKey="name"
                       type="category"
-                      width={100}
+                      width={140}
                       tick={{ fontSize: 11, fill: "#4b5563" }}
                       axisLine={false}
                       tickLine={false}
-                      tickFormatter={v => v.length > 14 ? v.slice(0, 13) + "…" : v}
+                      tickFormatter={v => v.length > 20 ? v.slice(0, 19) + "…" : v}
                     />
                     <Tooltip
                       cursor={{ fill: "#f3f4f6" }}

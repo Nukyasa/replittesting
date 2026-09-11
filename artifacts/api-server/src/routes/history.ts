@@ -237,57 +237,66 @@ historyRouter.get("/renewals", async (req: Request, res: Response) => {
     const rows = await db.select().from(historicalAwardsTable);
     const now = new Date();
 
-    const renewals = rows.map((r: any) => {
-      const awardDate = new Date(r.awardDate);
-      // Ako u nazivu stoji 2 ili 3 godine, trajanje je duže, inače standardno 12 mjeseci
-      let durationMonths = 12;
-      const lowerProc = (r.procedureName || "").toLowerCase();
-      if (lowerProc.includes("3 godine") || lowerProc.includes("36 mjeseci")) durationMonths = 36;
-      else if (lowerProc.includes("2 godine") || lowerProc.includes("24 mjeseca")) durationMonths = 24;
+    const renewals = rows
+      .map((r: any) => {
+        const awardDate = new Date(r.awardDate);
+        // Ako u nazivu stoji 2 ili 3 godine, trajanje je duže, inače standardno 12 mjeseci
+        let durationMonths = 12;
+        const lowerProc = (r.procedureName || "").toLowerCase();
+        if (lowerProc.includes("3 godine") || lowerProc.includes("36 mjeseci")) durationMonths = 36;
+        else if (lowerProc.includes("2 godine") || lowerProc.includes("24 mjeseca")) durationMonths = 24;
 
-      const expiryDate = new Date(awardDate);
-      expiryDate.setMonth(expiryDate.getMonth() + durationMonths);
+        const expiryDate = new Date(awardDate);
+        expiryDate.setMonth(expiryDate.getMonth() + durationMonths);
 
-      const projectedNoticeDate = new Date(expiryDate);
-      projectedNoticeDate.setDate(projectedNoticeDate.getDate() - 45); // Objava tendera obično 45 dana prije isteka starog
+        const projectedNoticeDate = new Date(expiryDate);
+        projectedNoticeDate.setDate(projectedNoticeDate.getDate() - 45); // Objava tendera obično 45 dana prije isteka starog
 
-      const diffTime = expiryDate.getTime() - now.getTime();
-      const daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const diffTime = expiryDate.getTime() - now.getTime();
+        const daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-      let urgency: "critical" | "high" | "medium" | "low" = "low";
-      if (daysUntilExpiry <= 30) urgency = "critical";
-      else if (daysUntilExpiry <= 60) urgency = "high";
-      else if (daysUntilExpiry <= 120) urgency = "medium";
+        let urgency: "critical" | "high" | "medium" | "low" | "expired" = "low";
+        if (daysUntilExpiry <= 0) {
+          urgency = "expired";
+        } else if (daysUntilExpiry <= 30) {
+          urgency = "critical";
+        } else if (daysUntilExpiry <= 60) {
+          urgency = "high";
+        } else if (daysUntilExpiry <= 120) {
+          urgency = "medium";
+        }
 
-      const category = lowerProc.includes("tehničk") || lowerProc.includes("tehnick") || (r.cpvKod || "").startsWith("7163")
-        ? "Tehnički pregled"
-        : lowerProc.includes("kasko") || lowerProc.includes("vozil")
-        ? "Osiguranje vozila (AO/Kasko)"
-        : lowerProc.includes("imovin")
-        ? "Osiguranje imovine"
-        : "Nezgoda i lica";
+        const category = lowerProc.includes("tehničk") || lowerProc.includes("tehnick") || (r.cpvKod || "").startsWith("7163")
+          ? "Tehnički pregled"
+          : lowerProc.includes("kasko") || lowerProc.includes("vozil")
+          ? "Osiguranje vozila (AO/Kasko)"
+          : lowerProc.includes("imovin")
+          ? "Osiguranje imovine"
+          : "Nezgoda i lica";
 
-      return {
-        id: r.id,
-        procedureName: r.procedureName,
-        contractingAuth: r.contractingAuth,
-        winnerName: r.winnerName,
-        winningBidAmount: r.winningBidAmount,
-        estimatedValue: r.estimatedValue || Math.round(r.winningBidAmount * 1.15),
-        discountPct: r.discountPct || 13,
-        awardDate: r.awardDate,
-        expiryDate: expiryDate.toISOString().split("T")[0],
-        projectedNoticeDate: projectedNoticeDate.toISOString().split("T")[0],
-        daysUntilExpiry,
-        urgency,
-        category,
-        ejnBroj: r.ejnBroj,
-      };
-    })
-    .sort((a: any, b: any) => a.daysUntilExpiry - b.daysUntilExpiry);
+        return {
+          id: r.id,
+          procedureName: r.procedureName,
+          contractingAuth: r.contractingAuth,
+          winnerName: r.winnerName,
+          winningBidAmount: r.winningBidAmount,
+          estimatedValue: r.estimatedValue || Math.round(r.winningBidAmount * 1.15),
+          discountPct: r.discountPct || 13,
+          awardDate: r.awardDate,
+          expiryDate: expiryDate.toISOString().split("T")[0],
+          projectedNoticeDate: projectedNoticeDate.toISOString().split("T")[0],
+          daysUntilExpiry,
+          urgency,
+          category,
+          ejnBroj: r.ejnBroj,
+        };
+      })
+      .filter((r: any) => r.daysUntilExpiry >= -90) // Zanemari ugovore istekle prije više od 3 mjeseca
+      .sort((a: any, b: any) => a.daysUntilExpiry - b.daysUntilExpiry);
 
     const urgentCount = renewals.filter((r: any) => r.urgency === "critical").length;
     const upcomingCount = renewals.filter((r: any) => r.urgency === "high" || r.urgency === "medium").length;
+    const expiredCount = renewals.filter((r: any) => r.urgency === "expired").length;
     const totalPipelineKM = renewals.reduce((acc: number, r: any) => acc + r.winningBidAmount, 0);
 
     res.json({
@@ -296,6 +305,7 @@ historyRouter.get("/renewals", async (req: Request, res: Response) => {
         total: renewals.length,
         urgentCount,
         upcomingCount,
+        expiredCount,
         totalPipelineKM,
       },
     });

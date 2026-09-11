@@ -717,7 +717,7 @@ export default function TenderDetail() {
 
   const autoProcessDocsMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/tenders/${id}/auto-process-docs`, {
+      const res = await fetch(`/api/tenders/${id}/documents/scrape`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -785,13 +785,16 @@ export default function TenderDetail() {
         (d.fileSize > 0 || d.localPath || d.parsedText)
     );
 
+    let timer: NodeJS.Timeout | undefined;
     if (!hasDownloaded && !autoProcessDocsMutation.isPending) {
       autoTriggeredRef.current = id;
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         autoProcessDocsMutation.mutate();
       }, 1200);
-      return () => clearTimeout(timer);
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [t, id, activeJobId]);
 
   const analyzeTender = useAnalyzeTender();
@@ -1310,9 +1313,9 @@ export default function TenderDetail() {
                 </div>
 
                 {/* Current calculated offer badge */}
-                {t.userTender?.offerAmount ? (
+                {(t.userTender as any)?.offerAmount ? (
                   <Badge className="bg-emerald-50 text-emerald-800 border border-emerald-300 font-mono text-xs px-2.5 py-0.5 font-bold shadow-2xs">
-                    💼 Zvanična ponuda: {formatMoney(t.userTender.offerAmount)}
+                    💼 Zvanična ponuda: {formatMoney((t.userTender as any).offerAmount)}
                   </Badge>
                 ) : null}
               </div>
@@ -1548,10 +1551,10 @@ export default function TenderDetail() {
                   }`}
                 >
                   <DollarSign className={`w-3.5 h-3.5 ${selectedCategory === "kalkulacije" ? "text-emerald-600" : "text-slate-400"}`} />
-                  <span>Kalkulacije & Ponuda</span>
-                  {t.userTender?.offerAmount ? (
+                  <span>Kalkulacije &amp; Ponuda</span>
+                  {(t.userTender as any)?.offerAmount ? (
                     <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded-md font-semibold font-mono">
-                      {formatMoney(t.userTender.offerAmount)}
+                      {formatMoney((t.userTender as any).offerAmount)}
                     </span>
                   ) : null}
                 </button>
@@ -1607,6 +1610,9 @@ export default function TenderDetail() {
                     </TabsTrigger>
                     <TabsTrigger value="dokumenti" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-medium">
                       📄 Dokumenti ({t.documents?.length || 0})
+                    </TabsTrigger>
+                    <TabsTrigger value="kontrola-ponude" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-bold text-emerald-700 bg-emerald-50/70">
+                      ✅ ZJN Checklista
                     </TabsTrigger>
                     <TabsTrigger value="izmjene-td" className="text-xs px-3 py-1.5 rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white font-semibold text-amber-700">
                       🔔 Izmjene TD & Pitanja
@@ -2591,16 +2597,17 @@ export default function TenderDetail() {
               tenderEstimatedValue={t.estimatedValue || 0}
               currency={t.currency}
               hasEAuction={t.hasEAuction}
-              ourOfferAmount={t.userTender?.offerAmount || (calcType === "fleet" ? finalFleetPremium : finalPropPremium)}
+              ourOfferAmount={(t.userTender as any)?.offerAmount || (calcType === "fleet" ? finalFleetPremium : finalPropPremium)}
             />
           </TabsContent>
 
-          {/* KONTROLA USKLAĐENOSTI TAB */}
+          {/* KONTROLA USKLAĐENOSTI TAB (ASA CENTRAL CHECK LISTA) */}
           <TabsContent value="kontrola-ponude" className="mt-6">
             <TenderComplianceMatrix
               tenderId={t.id}
               tenderTitle={t.title}
               contractingAuth={t.contractingAuth}
+              tender={t}
             />
           </TabsContent>
 

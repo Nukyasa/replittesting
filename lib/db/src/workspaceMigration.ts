@@ -131,4 +131,71 @@ CREATE TABLE IF NOT EXISTS urz_decisions (
 );
 CREATE INDEX IF NOT EXISTS urz_decisions_auth_idx ON urz_decisions(contracting_auth);
 CREATE INDEX IF NOT EXISTS urz_decisions_outcome_idx ON urz_decisions(outcome);
+CREATE TABLE IF NOT EXISTS tender_calculations (
+  id text PRIMARY KEY,
+  tender_id text NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+  guarantee_amount double precision,
+  validity_days integer,
+  duration text,
+  subject text,
+  base_premium double precision,
+  created_at timestamp DEFAULT now() NOT NULL,
+  updated_at timestamp DEFAULT now() NOT NULL,
+  CONSTRAINT tender_calculations_tender_id_unique UNIQUE(tender_id)
+);
+CREATE TABLE IF NOT EXISTS tender_related (
+  id text PRIMARY KEY,
+  tender_id text NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+  ejn_broj text NOT NULL,
+  type text NOT NULL,
+  title text NOT NULL,
+  date timestamp NOT NULL,
+  processed boolean DEFAULT false NOT NULL,
+  is_new boolean DEFAULT true NOT NULL,
+  detected_at timestamp DEFAULT now() NOT NULL,
+  created_at timestamp DEFAULT now() NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tender_notifications (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tender_id text NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+  type text NOT NULL,
+  message text NOT NULL,
+  is_read boolean DEFAULT false NOT NULL,
+  created_at timestamp DEFAULT now() NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tender_alerts (
+  id text PRIMARY KEY,
+  tender_id text NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+  type text NOT NULL,
+  severity text DEFAULT 'info' NOT NULL,
+  message text NOT NULL,
+  details jsonb,
+  is_read boolean DEFAULT false NOT NULL,
+  is_resolved boolean DEFAULT false NOT NULL,
+  resolved_by text REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at timestamp,
+  created_at timestamp DEFAULT now() NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tender_parsed_data (
+  id text PRIMARY KEY,
+  tender_id text NOT NULL UNIQUE REFERENCES tenders(id) ON DELETE CASCADE,
+  raw_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+  parsing_status text DEFAULT 'PENDING' NOT NULL,
+  parsing_error text,
+  parsed_at timestamp DEFAULT now() NOT NULL,
+  updated_at timestamp DEFAULT now() NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+  id text PRIMARY KEY,
+  tender_id text REFERENCES tenders(id) ON DELETE CASCADE,
+  batch_id text,
+  status text DEFAULT 'running' NOT NULL,
+  steps jsonb DEFAULT '[]'::jsonb NOT NULL,
+  errors jsonb DEFAULT '[]'::jsonb NOT NULL,
+  duration_ms integer,
+  triggered_by text DEFAULT 'cron' NOT NULL,
+  created_at timestamp DEFAULT now() NOT NULL,
+  completed_at timestamp
+);
 `;

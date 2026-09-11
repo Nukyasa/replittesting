@@ -38,7 +38,7 @@ type RenewalItem = {
   expiryDate: string;
   projectedNoticeDate: string;
   daysUntilExpiry: number;
-  urgency: "critical" | "high" | "medium" | "low";
+  urgency: "critical" | "high" | "medium" | "low" | "expired";
   category: string;
   ejnBroj?: string;
 };
@@ -49,6 +49,7 @@ type RenewalResponse = {
     total: number;
     urgentCount: number;
     upcomingCount: number;
+    expiredCount?: number;
     totalPipelineKM: number;
   };
 };
@@ -86,23 +87,30 @@ export default function RenewalRadarPage() {
   const uniqueWinners = Array.from(new Set(renewals.map((r) => r.winnerName))).filter(Boolean);
 
   const getUrgencyBadge = (urgency: string, days: number) => {
+    if (urgency === "expired") {
+      return (
+        <Badge className="bg-indigo-700 text-white font-medium flex items-center gap-1 shadow-xs">
+          <AlertTriangle className="w-3 h-3 text-amber-300" /> Ugovor istekao prije {Math.abs(days)} dana (Očekuje se novi tender)
+        </Badge>
+      );
+    }
     if (urgency === "critical") {
       return (
-        <Badge className="bg-rose-600 text-white font-bold animate-pulse flex items-center gap-1">
+        <Badge className="bg-rose-600 text-white font-bold animate-pulse flex items-center gap-1 shadow-xs">
           <Flame className="w-3 h-3" /> Ističe za {days} dana (Hitno!)
         </Badge>
       );
     }
     if (urgency === "high") {
       return (
-        <Badge className="bg-amber-500 text-white font-semibold flex items-center gap-1">
+        <Badge className="bg-amber-500 text-white font-semibold flex items-center gap-1 shadow-xs">
           <Clock className="w-3 h-3" /> Ističe za {days} dana
         </Badge>
       );
     }
     if (urgency === "medium") {
       return (
-        <Badge className="bg-blue-600 text-white font-medium flex items-center gap-1">
+        <Badge className="bg-blue-600 text-white font-medium flex items-center gap-1 shadow-xs">
           <Calendar className="w-3 h-3" /> Ističe za {days} dana
         </Badge>
       );
@@ -156,7 +164,9 @@ export default function RenewalRadarPage() {
             <div>
               <div className="text-xs text-rose-700 font-semibold uppercase tracking-wider">Hitna obnova (&lt; 30 dana)</div>
               <div className="text-2xl font-bold text-rose-950 mt-1">{stats?.urgentCount || 0}</div>
-              <div className="text-xs text-rose-600 mt-0.5">Tender u pripremi ili objavljen</div>
+              <div className="text-xs text-rose-600 mt-0.5">
+                {stats?.expiredCount ? `${stats.expiredCount} isteklih (re-tendering uskoro)` : "Tender u pripremi ili objavljen"}
+              </div>
             </div>
             <div className="p-3 bg-rose-100 rounded-xl text-rose-700">
               <Flame className="w-6 h-6" />
@@ -223,10 +233,11 @@ export default function RenewalRadarPage() {
           value={urgencyFilter}
           onChange={(e) => setUrgencyFilter(e.target.value)}
         >
-          <option value="all">Svi rokovi</option>
+          <option value="all">Svi rokovi &amp; ugovori</option>
           <option value="critical">Hitno (&lt; 30 dana)</option>
           <option value="high">Uskoro (30–60 dana)</option>
           <option value="medium">Na radaru (60–120 dana)</option>
+          <option value="expired">Istekli ugovori (novi tender uskoro)</option>
         </select>
       </div>
 

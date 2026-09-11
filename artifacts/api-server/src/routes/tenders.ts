@@ -50,14 +50,19 @@ export function getAsaScopeCondition(scope: string = "asa") {
   const insuranceTitleTerms = [
     "%osiguranj%",
     "%osiguranje%",
+    "%osiguranju%",
+    "%osiguranjem%",
     "%kasko%",
     "%autoodgovornost%",
     "%auto-odgovornost%",
     "%nezgod%",
     "%premij%osiguranj%",
-    "%dzo%",
     "%životn%osiguranj%",
     "%zivotn%osiguranj%",
+    "%осигура%",
+    "%каско%",
+    "%добровољн%здравствен%",
+    "%dobrovoljn%zdravstven%osiguranj%",
   ];
 
   const insuranceDescTerms = [
@@ -77,18 +82,17 @@ export function getAsaScopeCondition(scope: string = "asa") {
   ];
 
   const inspectionTitleTerms = [
-    "%tehničk%pregled%",
-    "%tehnick%pregled%",
+    "%tehničk%pregled%vozil%",
+    "%tehnick%pregled%vozil%",
+    "%tehničk%pregled%motorn%",
+    "%tehnick%pregled%motorn%",
+    "%ispitivanj%motornih%vozil%",
     "%ispitivanj%vozil%",
-    "%pregled%vozil%",
-    "%homologacij%",
     "%registracij%vozil%",
     "%baždarenj%tahograf%",
     "%bazdarenj%tahograf%",
-    "%tahograf%",
-    "%preventivn%pregled%",
-    "%stanic%tehničk%",
-    "%stanic%tehnick%",
+    "%stanic%tehničk%pregled%",
+    "%stanic%tehnick%pregled%",
   ];
 
   const inspectionDescTerms = [
@@ -99,29 +103,46 @@ export function getAsaScopeCondition(scope: string = "asa") {
     "%stanica tehničkog pregleda%",
   ];
 
-  const insuranceCpv = ["6651", "6600"];
-  const inspectionCpv = ["716312", "716300", "716310"];
+  // Isključivo CPV kodovi usluga osiguranja i tehničkog pregleda vozila (EJN stablo)
+  const insuranceCpv = ["6651", "6650", "6670"];
+  const inspectionCpv = ["716312"];
 
   const insuranceCond = or(
     ...insuranceTitleTerms.map((term) => ilike(tendersTable.title, term)),
     ...insuranceDescTerms.map((term) => ilike(tendersTable.description, term)),
-    ilike(tendersTable.category, "%osiguranj%"),
-    ilike(tendersTable.category, "%insurance%"),
     ...insuranceCpv.map((cpv) => sql`array_to_string(${tendersTable.cpvCodes}, ',') ILIKE ${"%" + cpv + "%"}`)
   );
 
   const inspectionCond = or(
     ...inspectionTitleTerms.map((term) => ilike(tendersTable.title, term)),
     ...inspectionDescTerms.map((term) => ilike(tendersTable.description, term)),
-    ilike(tendersTable.category, "%tehnički pregled%"),
-    ilike(tendersTable.category, "%tehnicki pregled%"),
     ...inspectionCpv.map((cpv) => sql`array_to_string(${tendersTable.cpvCodes}, ',') ILIKE ${"%" + cpv + "%"}`)
   );
 
-  if (scope === "insurance") return insuranceCond;
-  if (scope === "inspection") return inspectionCond;
-  // Default 'asa': Osiguranje + Tehnički pregled
-  return or(insuranceCond, inspectionCond);
+  // Stroga isključenja za lažne podudarnosti (građevinski/stručni nadzor, video nadzor, krediti, elektro-oprema)
+  const exclusions = and(
+    sql`${tendersTable.title} NOT ILIKE '%video nadzor%'`,
+    sql`${tendersTable.title} NOT ILIKE '%video-nadzor%'`,
+    sql`${tendersTable.title} NOT ILIKE '%stručni nadzor%'`,
+    sql`${tendersTable.title} NOT ILIKE '%strucni nadzor%'`,
+    sql`${tendersTable.title} NOT ILIKE '%nadzor nad izvođenjem%'`,
+    sql`${tendersTable.title} NOT ILIKE '%nadzor nad radovima%'`,
+    sql`${tendersTable.title} NOT ILIKE '%revolving kredit%'`,
+    sql`${tendersTable.title} NOT ILIKE '%dugoročni kredit%'`,
+    sql`${tendersTable.title} NOT ILIKE '%kratkoročni kredit%'`,
+    sql`${tendersTable.title} NOT ILIKE '%kreditno zaduženje%'`,
+    sql`${tendersTable.title} NOT ILIKE '%bankarske usluge%'`,
+    sql`${tendersTable.title} NOT ILIKE '%ss osiguranje%'`,
+    sql`${tendersTable.title} NOT ILIKE '%сс осигурање%'`,
+    sql`${tendersTable.title} NOT ILIKE '%transformatorsk%'`
+  );
+
+  let targetCond;
+  if (scope === "insurance") targetCond = insuranceCond;
+  else if (scope === "inspection") targetCond = inspectionCond;
+  else targetCond = or(insuranceCond, inspectionCond);
+
+  return and(targetCond, exclusions);
 }
 
 export const tendersRouter = Router();
@@ -190,6 +211,17 @@ tendersRouter.get("/", async (req, res) => {
   }
   if (status) {
     switch (status) {
+      case "open":
+        conditions.push(and(eq(tendersTable.status, "open"), gte(tendersTable.deadline, sql`NOW()`)));
+        break;
+      case "expired":
+        conditions.push(
+          or(
+            lt(tendersTable.deadline, sql`NOW()`),
+            eq(tendersTable.status, "closed")
+          )
+        );
+        break;
       case "awarded":
         conditions.push(and(eq(tendersTable.status, "closed"), ilike(tendersTable.statusName, "%dodijeljen%")));
         break;
@@ -686,15 +718,15 @@ tendersRouter.get("/tab-counts", async (req, res) => {
     const [openRes] = await db
       .select({ count: count() })
       .from(tendersTable)
-      .where(baseWhere ? and(baseWhere, eq(tendersTable.status, "open")) : eq(tendersTable.status, "open"));
+      .where(baseWhere ? and(baseWhere, eq(tendersTable.status, "open"), gte(tendersTable.deadline, now)) : and(eq(tendersTable.status, "open"), gte(tendersTable.deadline, now)));
 
     const [novoRes] = await db
       .select({ count: count() })
       .from(tendersTable)
       .where(
         baseWhere
-          ? and(baseWhere, eq(tendersTable.status, "open"), gte(tendersTable.publicationDate, twoDaysAgo))
-          : and(eq(tendersTable.status, "open"), gte(tendersTable.publicationDate, twoDaysAgo))
+          ? and(baseWhere, eq(tendersTable.status, "open"), gte(tendersTable.publicationDate, twoDaysAgo), gte(tendersTable.deadline, now))
+          : and(eq(tendersTable.status, "open"), gte(tendersTable.publicationDate, twoDaysAgo), gte(tendersTable.deadline, now))
       );
 
     const [deadline7Res] = await db
@@ -730,6 +762,47 @@ tendersRouter.get("/tab-counts", async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, "Failed to compute tab counts");
     return res.status(500).json({ error: "Failed to compute tab counts" });
+  }
+});
+
+tendersRouter.post("/maintenance/purge-non-insurance", async (req, res) => {
+  try {
+    const scopeCond = getAsaScopeCondition("asa");
+    if (!scopeCond) return res.status(400).json({ error: "No scope condition" });
+
+    // First delete any non-insurance records from child tables to avoid FK issues
+    await db.execute(sql`
+      DELETE FROM ai_analysis WHERE tender_id IN (
+        SELECT id FROM tenders WHERE NOT (${scopeCond})
+      )
+    `);
+    await db.execute(sql`
+      DELETE FROM documents WHERE tender_id IN (
+        SELECT id FROM tenders WHERE NOT (${scopeCond})
+      )
+    `);
+    await db.execute(sql`
+      DELETE FROM user_tenders WHERE tender_id IN (
+        SELECT id FROM tenders WHERE NOT (${scopeCond})
+      )
+    `);
+
+    // Delete non-insurance tenders
+    const deleted = await db.delete(tendersTable).where(sql`NOT (${scopeCond})`).returning({ id: tendersTable.id });
+    
+    // Also update remaining expired tenders to status: 'closed', statusName: 'Rok istekao'
+    const updated = await db.update(tendersTable)
+      .set({ status: "closed", statusName: "Rok istekao" })
+      .where(and(eq(tendersTable.status, "open"), lt(tendersTable.deadline, sql`NOW()`)))
+      .returning({ id: tendersTable.id });
+
+    const [keptCount] = await db.select({ count: count() }).from(tendersTable);
+
+    logger.info({ deletedCount: deleted.length, keptCount: keptCount?.count, updatedExpired: updated.length }, "Purged non-insurance tenders");
+    res.json({ success: true, deleted: deleted.length, kept: keptCount?.count, updatedExpired: updated.length });
+  } catch (error: any) {
+    logger.error({ err: error }, "Purge failed");
+    res.status(500).json({ error: error.message });
   }
 });
 

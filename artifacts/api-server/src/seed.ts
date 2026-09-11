@@ -710,10 +710,18 @@ export async function seedDatabase() {
         }
 
         if (Array.isArray(data.tenders) && data.tenders.length > 0) {
-          logger.info({ count: data.tenders.length }, "Seeding tenders from snapshot");
+          const insuranceTenders = data.tenders.filter((t: any) => {
+            const title = (t.title || "").toLowerCase();
+            const cpvs = (t.cpvCodes || t.cpv_codes || []).map((c: any) => String(c).replace(/[^0-9]/g, ""));
+            const hasCpv = cpvs.some((c: string) => c.startsWith("6651") || c.startsWith("6650") || c.startsWith("6670") || c.startsWith("716312"));
+            const hasWords = title.includes("osiguran") || title.includes("kasko") || title.includes("autoodgovornost") || title.includes("nezgod") || title.includes("осигура");
+            const notExcl = !title.includes("video nadzor") && !title.includes("stručni nadzor") && !title.includes("revolving kredit") && !title.includes("ss osiguranje");
+            return (hasCpv || hasWords) && notExcl;
+          });
+          logger.info({ totalInSnapshot: data.tenders.length, insuranceCount: insuranceTenders.length }, "Seeding insurance tenders from snapshot");
           const batchSize = 100;
-          for (let i = 0; i < data.tenders.length; i += batchSize) {
-            const chunk = data.tenders.slice(i, i + batchSize);
+          for (let i = 0; i < insuranceTenders.length; i += batchSize) {
+            const chunk = insuranceTenders.slice(i, i + batchSize);
             await db.insert(tendersTable).values(chunk.map((t: any) => ({
               id: t.id,
               externalId: t.externalId || t.external_id,
